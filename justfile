@@ -67,10 +67,11 @@ dist:
     powershell -NoProfile -ExecutionPolicy Bypass -File benchmarks\scripts\dist.ps1
 
 # deploy a release into the workshop's archive: one folder per release,
-# C:\workshop\quire-desktop-<version>\quire.exe. The name is `quire-desktop`,
-# the shell: the workshop lists one folder per release of several applications,
-# and a bare `quire-<version>` would not say which of the two shells put it
-# there. The script bumps [package] version's patch, builds, and commits and
+# C:\workshop\quire-desktop-<version>\quire-desktop-<version>.exe, so the file
+# carries the version the folder is named after. The name is `quire-desktop`, the
+# shell: the workshop lists one folder per release of several applications, and a
+# bare `quire-<version>` would not say which of the two shells put it there. The
+# script bumps [package] version's patch, builds, and commits and
 # pushes the bump; the archive folder is new every release, so nothing is ever
 # overwritten and no running instance is ever in the way (ADR-0139). The bump
 # has to precede the build because build.rs stamps the exe's version block from

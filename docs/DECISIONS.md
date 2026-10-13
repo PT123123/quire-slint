@@ -650,6 +650,21 @@ up once at this change (the instance was asked to leave through its own `--quit`
 door first). The app is run from wherever the user launches it; the workshop
 keeps saying, per folder, what was built when.
 
+**Update (2026-10-13): the version moved into the file's name too.** The
+destination is now `C:\workshop\quire-desktop-<version>\quire-desktop-<version>.exe`.
+The reasoning above is untouched — this changes the *spelling* of the one
+destination, not how many there are, and it neither restores an overwrite nor
+needs ADR-0105's channel: the folder is still new every release, and the file
+inside it is new with it. The reason is that the exe leaves its folder — it gets
+copied, opened in a properties tab, sent to someone — and `quire.exe` says
+nothing about which build it is once it sits beside another `quire.exe`. The
+`FileVersion` resource already carries the number (step 2 above is what stamps
+it), but that is one dialog away, while the name is what the shell lists. One
+`$name` in the script feeds the folder and the file, so the two cannot drift into
+two spellings of the same version. The `quire-desktop` prefix, rather than a bare
+`quire-`, is the same disambiguation this file's own header argues for: the
+workshop holds several applications and this repository has two shells.
+
 ## ADR-0138 · The 笔记 tag filter is a column again, and the header bar is only what is left
 
 The 笔记 half gets its **right-hand tag column** back, and the tag chips come out

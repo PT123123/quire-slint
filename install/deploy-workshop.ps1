@@ -1,12 +1,18 @@
 # Deploy a release into the workshop's archive: one folder per release,
-# C:\workshop\quire-desktop-<version>\quire.exe.
+# C:\workshop\quire-desktop-<version>\quire-desktop-<version>.exe.
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File install\deploy-workshop.ps1
 #
 # The workshop directory holds one folder per release, named <name>-<version>
 # (aura-1.2.6, aw-qtui-0.1.36), filled with what that build needs to run. Quire's
 # release exe is self-contained — dist.ps1 zips the one file and nothing beside
-# it — so its folder is quire.exe alone.
+# it — so its folder is that one exe alone.
+#
+# The version is in the file's own name, not only in the folder's, because the
+# file leaves the folder: it gets copied out, opened in a properties tab, sent to
+# someone. `quire.exe` says nothing about which build it is once it is beside
+# another `quire.exe`, and the FileVersion resource is one dialog away rather
+# than in the shell's own listing.
 #
 # The name is `quire-desktop`, not the manifest's `quire`: the workshop is where
 # this drops beside *other* applications, and the two shells this repository has
@@ -38,7 +44,8 @@
 #   3. The bump is committed (Cargo.toml + Cargo.lock, nothing else) and pushed,
 #      the way every repository in this workspace is left: the commit is the
 #      record of what each folder in the workshop was built from.
-#   4. target\release\quire.exe is copied into the version folder.
+#   4. target\release\quire.exe is copied into the version folder under the
+#      versioned name, so the file carries the number the folder is named for.
 #
 # One rule for the text below: every character inside a Write-Output or a throw
 # is ASCII. Windows PowerShell 5.1 reads a BOM-less script as ANSI — this file is
@@ -117,8 +124,12 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 # One copy, into the folder named after the version. There is no in-place
 # install path any more (ADR-0139), so no running instance sits on a file this
 # deploy writes and nothing has to be asked to leave.
-$archive = Join-Path 'C:\workshop' "quire-desktop-$version"
+$name = "quire-desktop-$version"
+$archive = Join-Path 'C:\workshop' $name
 New-Item -ItemType Directory -Force -Path $archive | Out-Null
-Copy-Item $exe (Join-Path $archive 'quire.exe') -Force
+# One variable feeds both, so the folder and the file inside it cannot drift into
+# two different spellings of the version.
+$deployed = Join-Path $archive "$name.exe"
+Copy-Item $exe $deployed -Force
 Write-Output ("==> archived v{0} ({1:N1} MiB) -> {2}" -f `
-    $version, ((Get-Item $exe).Length / 1MB), (Join-Path $archive 'quire.exe'))
+    $version, ((Get-Item $exe).Length / 1MB), $deployed)
