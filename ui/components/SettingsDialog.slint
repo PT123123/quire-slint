@@ -15,6 +15,7 @@ import { Icon } from "../Icons.slint";
 import { Button } from "./Button.slint";
 import { IconButton } from "./IconButton.slint";
 import { SyncPage } from "./SyncPage.slint";
+import { McpPage } from "./McpPage.slint";
 import { UIState } from "../Types.slint";
 
 // One palette swatch of the theme picker (ADR: the theme catalog). The card
@@ -277,8 +278,8 @@ component SettingsSection inherits VerticalLayout {
     }
 }
 
-// The 外观 / 通用 / 同步 / 快捷键 / 关于 switch. A segmented box rather than
-// five free buttons: the lit quarter *is* the answer, and the box around them
+// The 外观 / 通用 / 同步 / MCP / 快捷键 / 关于 switch. A segmented box rather
+// than six free buttons: the lit quarter *is* the answer, and the box around them
 // says they are alternatives — the same idiom the sync panel's 设备/统计/日志
 // uses. Hidden while the search filters, because a tab is a place and a search
 // result list is not.
@@ -294,7 +295,7 @@ component SettingsTabs inherits Rectangle {
     clip: true;
 
     HorizontalLayout {
-        for entry[i] in ["外观", "通用", "同步", "快捷键", "关于"] : Rectangle {
+        for entry[i] in ["外观", "通用", "同步", "MCP", "快捷键", "关于"] : Rectangle {
             // A selected box is a **state**, not an emphasis, for ADR-0118's
             // reason: `surface-selected` is a 22%-accent mix — a saturated
             // plate. A raised surface with the label in the primary colour says
@@ -563,6 +564,23 @@ export component SettingsDialog inherits PopupWindow {
                             UIState.toggle-lan-sharing();
                         }
                     }
+                    ToggleRow {
+                        label: "允许 AI Agent 通过 MCP 读写（端口 5880，重启后生效）";
+                        keywords: "通用 mcp ai agent 人工智能 接口 端口 5880";
+                        on: UIState.mcp-enabled;
+                        toggled(v) => {
+                            UIState.mcp-enabled = v;
+                            UIState.toggle-mcp();
+                        }
+                    }
+                    if (UIState.settings-filter == ""
+                        || UIState.settings-match("通用 mcp ai agent 人工智能 接口 端口 5880 客户端 配置 回收站"))
+                    : Text {
+                        text: "开启后本机提供 MCP 服务，Agent 可读写笔记与任务 — 客户端配置与调用日志见「MCP」页。删除类操作仅移入回收站，可恢复。";
+                        font-size: Typography.size-caption;
+                        color: Colors.text-muted;
+                        wrap: TextWrap.word-wrap;
+                    }
 
                     // ── 存储, the one block that is not a toggle ──────────
                     if (UIState.settings-filter == ""
@@ -649,9 +667,28 @@ export component SettingsDialog inherits PopupWindow {
                     SyncPage {}
                 }
 
-                // ── 快捷键 ───────────────────────────────────────────────
+                // ── MCP ──────────────────────────────────────────────────
+                // The agent door, as a tab for the same reason the sync panel
+                // is one: the configs to copy and the call log are things a
+                // user comes back to look at. The panel carries its own
+                // heading and its own switch; the keywords on the door are
+                // the ones a search would use to find this place.
                 if (UIState.settings-filter == ""
                     ? UIState.settings-tab == 3
+                    : UIState.settings-match("mcp ai agent 人工智能 接口 端口 5880 客户端 配置 令牌 token 日志 回收站 笔记 任务"))
+                : VerticalLayout {
+                    width: parent.width;
+                    spacing: Theme.spacing-md;
+                    Rectangle {
+                        height: 1px;
+                        background: Colors.border;
+                    }
+                    McpPage {}
+                }
+
+                // ── 快捷键 ───────────────────────────────────────────────
+                if (UIState.settings-filter == ""
+                    ? UIState.settings-tab == 4
                     : UIState.settings-match("快捷键 命令面板 搜索页面 页内查找 新建页面 侧边栏 主题 深色 浅色 撤销 重做 粗体 斜体 代码 公式 缩进 复制块 保存 放大 缩小 复位 后退 前进"))
                 : SettingsSection {
                     label: "快捷键";
@@ -695,7 +732,7 @@ export component SettingsDialog inherits PopupWindow {
 
                 // ── 关于 ─────────────────────────────────────────────────
                 if (UIState.settings-filter == ""
-                    ? UIState.settings-tab == 4
+                    ? UIState.settings-tab == 5
                     : UIState.settings-match("关于 版本 渲染器 renderer about"))
                 : SettingsSection {
                     label: "关于";

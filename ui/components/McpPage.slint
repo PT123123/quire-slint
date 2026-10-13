@@ -1,0 +1,310 @@
+// MCP（AI Agent 接口）— the settings dialog's MCP tab, as an embeddable panel.
+//
+// The page answers the two questions a user brings to an agent-facing door:
+// "what do I paste into the other program" — two ready-to-copy client configs,
+// stdio and HTTP, built by Rust with the real exe path, port and token — and
+// "what have the agents been doing" — the call log, one line per tools/call,
+// the same stored tail (settings row "mcp.log", 50 lines) the sync page keeps
+// for its rounds. The switch lives here too, beside the status sentence: the
+// dialog's 通用 tab carries the same toggle for the search field, but the page
+// a user opens to configure the thing should not send them elsewhere to turn
+// it on.
+//
+// Every string below is Rust's, for the reason SyncPage's numbers are: the
+// configs are JSON the agent will actually parse (an escape done in a .slint
+// expression is an escape that will someday be wrong), and the log ages come
+// from the same reader the sync log uses. This file only places them.
+
+import { ListView } from "std-widgets.slint";
+import { Theme } from "../Theme.slint";
+import { Colors } from "../Colors.slint";
+import { Typography } from "../Typography.slint";
+import { UIState, McpLogRow } from "../Types.slint";
+
+// ── local vocabulary ─────────────────────────────────────────────────────
+
+// One text button — the page's only verb is 清空日志, so a full button
+// component would be machinery for one use; SyncButton's shape, one state.
+component McpTextButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> danger: false;
+    callback clicked();
+
+    height: 26px;
+    width: btn-label.preferred-width + 18px;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: root.danger ? Colors.danger : Colors.border;
+    background: ta.has-hover ? (root.danger ? Colors.danger : Colors.hover-fill) : transparent;
+    animate background { duration: Theme.duration-instant; }
+
+    btn-label := Text {
+        x: 9px;
+        width: parent.width - 18px;
+        height: parent.height;
+        text: root.label;
+        font-family: Typography.ui-font;
+        font-size: Typography.size-caption;
+        color: root.danger ? Colors.danger : Colors.text-secondary;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    ta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The 40x22 switch, drawn rather than borrowed: the same control the sync
+// panel's 自动同步 row draws, and the one the settings dialog's ToggleRow
+// owns a private copy of. `toggled` carries the new value so the handler
+// reads as an intent, not as a diff.
+component McpSwitch inherits Rectangle {
+    in property <bool> on;
+    callback toggled(bool);
+
+    width: 40px;
+    height: 22px;
+    border-radius: 11px;
+    background: root.on ? Colors.accent : Colors.border-strong;
+    animate background { duration: Theme.duration-fast; }
+    Rectangle {
+        x: root.on ? parent.width - self.width - 2px : 2px;
+        y: 2px;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        background: Colors.surface-overlay;
+        animate x { duration: Theme.duration-fast; }
+    }
+    TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.toggled(!root.on); }
+    }
+}
+
+// One ready-to-paste config. A read-only TextInput is the whole trick (the
+// settings dialog's CopyableText carries the full argument): selectable,
+// Ctrl+A/Ctrl+C-able, refusing every edit — a label that gives its text away.
+// The height is the wrapped text's own, so a long path wraps instead of
+// eliding — an elided config is a config the user cannot copy whole.
+component ConfigBox inherits Rectangle {
+    in property <string> body;
+
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Colors.border;
+    background: Colors.background;
+    height: cfg.preferred-height + 16px;
+    clip: true;
+
+    cfg := TextInput {
+        x: 8px;
+        y: 8px;
+        width: parent.width - 16px;
+        text: root.body;
+        read-only: true;
+        wrap: word-wrap;
+        font-family: Typography.mono-font;
+        font-size: Typography.size-caption;
+        color: Colors.text-primary;
+        selection-foreground-color: Colors.text-primary;
+        selection-background-color: Colors.selection;
+    }
+}
+
+// A section's caption — the sync panel's SyncSectionLabel, restated for the
+// same reason that file restates it: this page cannot see that component's
+// private copies.
+component McpSectionLabel inherits Text {
+    in property <string> label;
+    text: root.label;
+    font-family: Typography.ui-font;
+    font-size: Typography.size-caption;
+    font-weight: Typography.weight-semibold;
+    color: Colors.text-muted;
+    vertical-alignment: center;
+}
+
+// One line of the log: age, tool, sentence. The sync log's SyncLogLine with
+// the tool name where the peer goes; a failure is the one coloured word on
+// the row, because a failure is the one line that has to be findable by
+// scanning.
+component McpLogLine inherits Rectangle {
+    in property <McpLogRow> line: { when: "", tool: "", ok: true, message: "" };
+
+    height: max(20px, message.preferred-height + 10px);
+    border-radius: Theme.radius-xs;
+    background: ta.has-hover ? Colors.hover-fill : transparent;
+
+    HorizontalLayout {
+        padding-left: Theme.spacing-sm;
+        padding-right: Theme.spacing-sm;
+        padding-top: 5px;
+        padding-bottom: 5px;
+        spacing: Theme.spacing-sm;
+        cross-axis-alignment: start;
+        Text {
+            width: 64px;
+            text: root.line.when;
+            font-family: Typography.mono-font;
+            font-size: Typography.size-caption;
+            color: Colors.text-muted;
+            vertical-alignment: top;
+            overflow: elide;
+        }
+        Text {
+            width: 110px;
+            text: root.line.tool;
+            font-family: Typography.ui-font;
+            font-size: Typography.size-caption;
+            color: Colors.text-secondary;
+            vertical-alignment: top;
+            overflow: elide;
+        }
+        message := Text {
+            horizontal-stretch: 1;
+            max-width: 100000px;
+            text: root.line.message;
+            font-family: Typography.ui-font;
+            font-size: Typography.size-caption;
+            color: root.line.ok ? Colors.text-secondary : Colors.danger;
+            vertical-alignment: top;
+            wrap: word-wrap;
+        }
+    }
+    ta := TouchArea { }
+}
+
+// ── the page ─────────────────────────────────────────────────────────────
+
+export component McpPage inherits Rectangle {
+    background: transparent;
+    // The rule SyncPage states for itself, restated because a `Rectangle`
+    // whose content is a layout takes its `max-width` from that layout's
+    // preferred width — without the ceiling the stretch factor has no room.
+    horizontal-stretch: 1;
+    max-width: 100000px;
+
+    VerticalLayout {
+        // No padding of its own: the embedding context (the settings dialog's
+        // content column) owns the margins.
+        spacing: Theme.spacing-md;
+
+        // ── the title row: heading, status, the switch ───────────────────
+        HorizontalLayout {
+            height: 34px;
+            spacing: Theme.spacing-md;
+            cross-axis-alignment: center;
+            Text {
+                text: "MCP";
+                font-family: Typography.ui-font;
+                font-size: Typography.size-h2;
+                font-weight: Typography.weight-bold;
+                color: Colors.text-primary;
+                vertical-alignment: center;
+            }
+            Text {
+                // The status sentence is Rust's three states, in Slint's
+                // words: up (with the address), armed-but-not-running (a
+                // restart away), off.
+                text: UIState.mcp-running
+                    ? "服务运行中 · " + UIState.mcp-endpoint
+                    : (UIState.mcp-enabled ? "已开启 — 重启 Quire 后生效" : "已关闭");
+                font-family: Typography.ui-font;
+                font-size: Typography.size-caption;
+                color: UIState.mcp-running ? Colors.text-secondary : Colors.text-muted;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            McpSwitch {
+                on: UIState.mcp-enabled;
+                toggled(v) => {
+                    UIState.mcp-enabled = v;
+                    UIState.toggle-mcp();
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: Colors.border; }
+
+        // ── 客户端配置 ────────────────────────────────────────────────────
+        McpSectionLabel { label: "客户端配置"; }
+        Text {
+            text: "把下面任意一段复制进支持 MCP 的客户端的配置文件即可；两段连的是同一个正在运行的 Quire，删改会实时出现在界面上。删除类操作只移入回收站，可恢复。";
+            font-family: Typography.ui-font;
+            font-size: Typography.size-caption;
+            color: Colors.text-muted;
+            wrap: TextWrap.word-wrap;
+        }
+        // stdio — most desktop agents spawn a program. The config exists only
+        // once a token does (the bridge reads the pointer file the first
+        // enabled start writes), so before that the page says so instead of
+        // showing a half-typed sentence.
+        if UIState.mcp-config-stdio == "" : Text {
+            text: "还没有令牌 — 开启 MCP 并重启 Quire 后，这里会出现可直接复制的配置。";
+            font-family: Typography.ui-font;
+            font-size: Typography.size-caption;
+            color: Colors.text-muted;
+            wrap: TextWrap.word-wrap;
+        }
+        if UIState.mcp-config-stdio != "" : VerticalLayout {
+            spacing: Theme.spacing-xs;
+            Text {
+                text: "stdio — 启动本机程序（推荐）";
+                font-family: Typography.ui-font;
+                font-size: Typography.size-caption;
+                color: Colors.text-secondary;
+            }
+            ConfigBox { body: UIState.mcp-config-stdio; }
+            Text {
+                text: "HTTP — 直连本机端口";
+                font-family: Typography.ui-font;
+                font-size: Typography.size-caption;
+                color: Colors.text-secondary;
+            }
+            ConfigBox { body: UIState.mcp-config-http; }
+        }
+
+        Rectangle { height: 1px; background: Colors.border; }
+
+        // ── 调用日志 ─────────────────────────────────────────────────────
+        HorizontalLayout {
+            height: 26px;
+            spacing: Theme.spacing-sm;
+            cross-axis-alignment: center;
+            McpSectionLabel { label: "调用日志"; horizontal-stretch: 0; }
+            Text {
+                text: UIState.mcp-log.length + " 条记录（保留最近 50 条）";
+                font-family: Typography.ui-font;
+                font-size: Typography.size-caption;
+                color: Colors.text-muted;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            if UIState.mcp-log.length > 0 : McpTextButton {
+                label: "清空日志";
+                danger: true;
+                clicked => { UIState.mcp-log-cleared(); }
+            }
+        }
+        if UIState.mcp-log.length == 0 : VerticalLayout {
+            height: 120px;
+            alignment: center;
+            spacing: Theme.spacing-sm;
+            Text {
+                text: "还没有记录 — Agent 的每一次调用都会留在这里。";
+                font-family: Typography.ui-font;
+                font-size: Typography.size-caption;
+                color: Colors.text-muted;
+                horizontal-alignment: center;
+            }
+        }
+        if UIState.mcp-log.length > 0 : ListView {
+            vertical-stretch: 1;
+            for line in UIState.mcp-log : McpLogLine { line: line; }
+        }
+    }
+}

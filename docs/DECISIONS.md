@@ -7829,3 +7829,177 @@ by its other numbers. The only thing that caught it was counting the report line
 Unverified: the tray's own keyboard walk inside 速记 (↑↓ / Enter / Tab) is now reached
 through the injected callbacks, but only the round trip Rust → `suggestions` is
 covered by `--quick-note`; the key handling itself is still only checked by hand.
+
+## ADR-0153 · The pale ring on 速记 is DWM's to paint, so the fix writes DWM attributes — and the gate now says whether DWM would answer
+
+**Clearing `WS_EX_WINDOWEDGE` does not take the ring down, and the failed write is
+kept as the reason.** `WS_EX_WINDOWEDGE` is documented as "the window has a border
+with a raised edge", winit seeds it on every window and clears it only for **child**
+ones (`winit-0.30.13/.../window_state.rs:259`, `:288`), so a frameless top-level
+keeps it whatever `no-frame` says. The obvious fix is therefore to clear the bit,
+and it measured as a no-op on the live window:
+
+```text
+style=0x40198 want=0x40098 prev=0x40198 after=0x40198 setpos=1
+```
+
+`SetWindowLongPtrW` handed back the old style, took the new one, `SetWindowPos`
+returned 1, and the bit read straight back set. Windows 11 paints that ring from the
+composer, which keeps its own copy; the style bit only ever *described* it.
+
+**Two white lines, two owners.** ADR-0152's card change — `outlined: false`, which
+drops the `border-strong` the card draws for itself — removed a *different* line and
+could not have reached this one. Neither is reachable from `.slint`: Slint's window
+flags stop at `always-on-top` and `no-frame`.
+
+**The fix asks DWM in its own terms** (`platform::clear_window_edge`,
+`src/platform/mod.rs`): `DWMWA_BORDER_COLOR (34)` set to `DWMWA_COLOR_NONE
+(0xFFFFFFFE)`, `DWMWA_WINDOW_CORNER_PREFERENCE (33)` set to `DWMWCP_DONOTROUND (1)`
+— rounding is decided here too, and `radius: 0px` in `.slint` does not reach it —
+then `SetWindowPos(…, SWP_FRAMECHANGED)`, because the shell draws the frame from a
+latched copy and the attribute write alone is not what the user sees. The style bit
+is cleared last and best-effort: cheap, and if some future Windows respects it the
+two agree.
+
+**Re-measured from outside the app on this machine (Windows 10.0.26200), against the
+running 速记 window, with a PowerShell P/Invoke probe rather than the app's own
+report:**
+
+```text
+Set CORNER=DONOTROUND   hr=0x00000000
+Get BORDER_COLOR        hr=0x80070057 val=0x00000000
+Get CORNER_PREFERENCE   hr=0x00000000 val=1
+```
+
+So: 圆角写进去了并且读得回来（`1` = DONOTROUND）。描边色**这台机不肯回答**，
+`DwmGetWindowAttribute(34)` 直接 `E_INVALIDARG`。The app's own write of that
+attribute was accepted — `clear_window_edge` returns `Err("DWM declined …")` when a
+Set is non-zero and `apply_quick_note_window_style` logs a `速记 window edge` warn
+for it, and `AppData/Roaming/Quire/quire.log` carries no such line for these runs.
+
+**Which is why the gate's border rule was a green that asked nothing.** It reads
+`dwm_border_suppressed(...) != Some(false)`, and on this build that function returns
+`None` — 「DWM 不答」 and 「DWM 说没有」 are the same value to a `!= Some(false)`, so
+the rule passed whether or not DWM had been told anything. `--quick-note` now prints
+the tri-state on every stage:
+
+```text
+quick-note press: … note-ex=0x00040198 toolwindow=true windowedge=true dwm-border=unreadable …
+```
+
+**The rule is deliberately not tightened to `== Some(true)`.** A rule that must go
+red on every platform that cannot be asked is a rule nobody trusts, and this platform
+cannot be asked. The honest form is the one above: it stays green, and the line says
+out loud that the green is not complete.
+
+**A claim is withdrawn.** The comment on `apply_quick_note_window_style` used to say
+the write order was load-bearing *and* that the surviving style value had the edge
+bit taken out. Every stage of the gate prints `note-ex=0x00040198` with
+`windowedge=true` **in both orders** — the version that cleared the edge first and
+this one read back identically — so the printed bit never distinguished them and was
+never evidence for the ordering. The order is kept for the original
+read-modify-write reason, and the comment now says that is reasoning, not measurement.
+
+**Unverified: whether the line is gone on the screen.** DWM's border colour cannot be
+read here, screenshots are not used on this machine, and pixels are the user's to
+judge. 门绿不等于线没了。What is verified is the write was accepted, the corner
+preference reads back suppressed, and the gate no longer reports a question it did
+not ask as an answer.
+
+## ADR-0154 · An Agent writes through the application's own funnel — one writer, a loopback port with a minted token, and 回收站 as its only delete verb
+
+**The application stays the only writer of the library.** The alternative — a second
+process that opens the SQLite file and answers MCP itself — was rejected on two
+counts, both of them the core's own rules rather than taste. Ids are
+caller-allocated with a watermark that lives in the running application's memory
+(core ADR-0067), so a second writer allocates from a watermark it cannot see and
+collides. And persistence is debounced behind the UI's own pipeline, so rows written
+by a stranger never reach the open window: the Agent's work would be invisible until
+restart. Every MCP call therefore becomes a `AppState::org_*` method, the same funnel
+a keystroke uses (`exec_org` → record), which buys three things at once: the row shows
+up, the row is undoable with Ctrl+Z, and the UI refresh path is the one already tested.
+
+**The tool surface is the organizer's two lists, and nothing else.** `list_notes`,
+`create_note`, `update_note`, `trash_note`, `restore_note`, `list_tasks`,
+`create_task`, `update_task`, `trash_task`, `restore_task` — ten, and
+`tools/list` answers exactly those. Pages are not in the protocol: no page read, no
+page write, no page delete. And the only delete verb offered is 移到回收站 —
+`trash_*` writes the `deleted_at` stamp (`restore_*` clears it), while
+`org_delete_note`, the hard delete the UI's own button uses, is deliberately not on
+the Agent's menu. An Agent that misreads a conversation should be able to ruin a
+list, not empty a library.
+
+**Two transports, one running server.** HTTP is embedded in the app
+(`src/mcp.rs::McpServer`): `127.0.0.1`, Bearer token in `Authorization` or
+`X-Quire-Token`, JSON-RPC 2.0 over one POST per message (SSE `GET` is answered 405 —
+the spec's own per-request fallback works). `quire.exe mcp` is a stdio bridge for the
+far more common client shape, which spawns a subprocess and speaks newline JSON: the
+bridge owns no database and opens no window, it reads port and token from
+`mcp.json` beside the library and forwards each line to the embedded endpoint. A
+bridge that finds a port but no token **refuses to start** rather than carrying on
+without one, because the token is the only door — whoever holds the port would
+otherwise hold the library.
+
+**Port 5880, because 5878 was already taken — and the collision was invisible.** The
+first cut shipped `DEFAULT_PORT = 5878`, which is `services::sync::SYNC_PORT`: every
+Quire on the LAN listens there and ADR-0128 counts a peer by whether 5878 answers.
+Both binds succeeded only because `controller::wire` (which binds `0.0.0.0:5878` for
+sync) runs at `main.rs:642`, before the MCP block — swap that order and enabling MCP
+breaks cross-device sync, with the failure printed to a stderr the release build does
+not have. Measured while it was still double-booked:
+
+```text
+POST http://<本机的局域网 IP>:5878/mcp  -> 404 "not found"  (that is the sync listener, not MCP)
+POST http://127.0.0.1:5878/mcp          -> 200 {"result":{"serverInfo":{"name":"quire" …
+```
+
+so MCP was loopback-only *by accident of bind order*, which is not a security
+property worth relying on. MCP moves to 5880 (5877 share, 5878 sync, 5879 discovery,
+5880 free). The UI's config strings and `mcp.json` both carry the port, so nothing
+else had to change.
+
+**The page now reports the bind, not the intention.** `set_mcp_running(true)` used to
+be set on the strength of a `thread::spawn` whose bind result went only to `eprintln`,
+so a port that would not open left the settings page saying 「服务运行中 ·
+127.0.0.1:5880」 and the log claiming 「MCP 服务已启动」 over a server that never
+existed. The bind now happens on the thread that owns the UI: success writes the
+pointer file, arms the pump, logs 已启动 and lights the page; failure logs
+「MCP 起不来 — 127.0.0.1:5880：<原因>」, leaves `mcp_running` false and leaves **no
+pointer file behind** for a bridge to faithfully forward into.
+
+**Thread model.** `AppState` is `Rc` and cannot leave the UI thread, so an HTTP worker
+turns `tools/call` into an `McpJob` on a channel and waits (120 s) for the answer;
+`arm_pump`'s leaked 250 ms timer drains the queue on the UI thread, runs the tool,
+appends the MCP log line and replies — the same shape as the sync engine's job pump,
+including the `Box::leak`, which is there because a dropped timer silently stops the
+pump. Every call lands in `mcp.log`: one settings row carrying the last 50 lines
+(tool, ok, one human sentence), so what an Agent did survives a restart and reads as
+「3 分钟前」 rather than as JSON.
+
+**Found while documenting: `restore_task` was not in `WRITES`.** The table that says
+which tools refresh the organizer listed seven of the eight write tools, so restoring
+a task through MCP wrote the row and left the on-screen list stale until something
+else refreshed it — a silent half-write, invisible to the caller because the reply was
+`{"ok":true}`. `restore_note` was listed. One line, and the count went 7 → 8.
+
+**Verified against the built binary, on a scratch library
+(`--db …/Temp/quire-mcp-e2e/quire.sqlite`), not against the user's data.** Through the
+stdio bridge: `initialize` negotiated `2025-06-18` and answered
+`serverInfo {name: quire}`; `tools/list` returned 10 tools; `create_note` and
+`create_task` returned `{"id":1}` and both read back through `list_notes` /
+`list_tasks` with tags split into `["验证","e2e"]`, `due 2026-10-20`, `priority high`;
+`update_task done:true` → `trash_task` → `restore_task` round-tripped to
+`done:true trashed:false`; `create_note` with no title answered
+`isError "缺少或非法参数：title"`, and `delete_note` answered `isError "未知工具"` —
+the hard delete genuinely is not reachable. A wrong token answered
+`401 {"error":"unauthorized"}`. The protocol core carries seven unit tests in
+`src/mcp.rs` — measured run: `cargo test --lib mcp::` → `7 passed; 0 failed;
+212 filtered out` (version negotiation and fallback, list/call round trip, tool errors as
+`isError` rather than JSON-RPC errors, notifications silent, `-32601`, parse and batch
+errors, pointer round trip, 401 and 404).
+
+**Unverified:** the tool面 itself has no unit test — `exec`'s ten arms are checked by
+the live round trip above, not by the crate's own gate; the MCP settings page is
+checked by binding and reading globals, not by pixels; and the pump's 250 ms latency
+is measured only as "the reply came", so an Agent that expects a synchronous write
+still sees up to a quarter-second of lag.

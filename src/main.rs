@@ -46,6 +46,9 @@ pub struct LaunchArgs {
     /// Serve the workspace read-only on the LAN (--share [port], default
     /// 5877).
     pub share: Option<u16>,
+    /// MCP server for AI agents (--mcp); the settings toggle (`mcp.enable`)
+    /// is the persistent way in, this flag forces it on for one run.
+    pub mcp: bool,
     /// Pull a framed workspace from another Quire and import it
     /// (--pull http://host:5877).
     pub pull: Option<String>,
@@ -79,6 +82,7 @@ fn parse_launch_args() -> LaunchArgs {
         quick_note: false,
         open: None,
         share: None,
+        mcp: false,
         pull: None,
         measure_startup: false,
     };
@@ -139,6 +143,9 @@ fn parse_launch_args() -> LaunchArgs {
             }
             ("--share", _) => {
                 a.share = Some(quire::services::lan_server::DEFAULT_PORT);
+            }
+            ("--mcp", _) => {
+                a.mcp = true;
             }
             ("--share-port", Some(v)) => {
                 if let Ok(p) = v.parse() {
@@ -228,7 +235,51 @@ fn quick_note_keep_off_taskbar(window: &quire::QuickNoteWindow) {
     leak_timer(t);
 }
 
+/// Both extended-style writes the 速记 window owes, in one call so neither can be
+/// forgotten next to the other (ADR-0153).
+///
+/// Neither is reachable from `.slint`: Slint's window flags stop at
+/// `always-on-top` and `no-frame`, and winit seeds `WS_EX_WINDOWEDGE` on every
+/// window while only clearing it for **child** windows — so a frameless
+/// top-level keeps the pale ring no matter what `no-frame` says.
+///
+/// **What takes the ring down is the DWM attribute; the ordering claim this
+/// comment used to make is withdrawn.** winit owns `GWL_EXSTYLE` and rewrites the
+/// whole value from its own flags whenever one of them changes (`VISIBLE` is one
+/// of them), so the edge bit the shell seeded comes back after both writes.
+/// Measured on this machine (Windows 10.0.26200): every stage of `--quick-note`
+/// prints `note-ex=0x00040198` with `windowedge=true` — the same reading the
+/// version that cleared the edge *first* produced, so the printed bit does not
+/// distinguish the two orders and was never evidence for choosing one. The edge
+/// still goes last, on the original reasoning (an earlier `hide_from_taskbar`
+/// read-modify-write could re-seed it deliberately), and nothing here claims the
+/// bit ends up clear. ADR-0153 records what DWM does answer — the corner
+/// preference reads back `DWMWCP_DONOTROUND` — and what it will not: a read of
+/// `DWMWA_BORDER_COLOR` returns `0x80070057` on this build, which is why the
+/// gate's border rule prints its tri-state instead of trusting its own green.
+///
+/// The edge clear is reported but not fatal, so a window that is off the taskbar
+/// but still wearing the ring is a `warn` rather than a retry loop — the second
+/// pass would read the same style and reach the same state.
+fn apply_quick_note_window_style(window: &quire::QuickNoteWindow) -> Result<(), String> {
+    let taskbar = platform::hide_from_taskbar(window.window());
+    let edge = platform::clear_window_edge(window.window());
+    taskbar?;
+    if let Err(e) = edge {
+        logging::warn(&format!("速记 window edge: {e}"));
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // `mcp` is not a session either. It is the stdio bridge an MCP client
+    // spawns: newline-delimited JSON-RPC on stdin, forwarded to the *running*
+    // application's embedded HTTP endpoint, answers on stdout. The app is the
+    // single writer; the bridge owns no database and opens no window.
+    let argv_all: Vec<String> = std::env::args().collect();
+    if argv_all.get(1).map(String::as_str) == Some("mcp") {
+        std::process::exit(quire::mcp::run_stdio_bridge(&argv_all));
+    }
     // `--quit` is not a session. It asks the *running* instance to end its own
     // — through the same route the tray menu's 「退出」 uses, so that instance's
     // flush runs and it writes its clean-exit record — and then leaves without
@@ -991,6 +1042,109 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                 });
             }
             None => eprintln!("quire: --share needs a database; sharing disabled"),
+        }
+    }
+
+    // MCP: the AI-agent endpoint. Off unless --mcp or the settings toggle
+    // (mcp.enable) says otherwise; binds 127.0.0.1 behind a bearer token,
+    // and every tools/call rides the job channel to the UI thread, so the
+    // app stays the single writer and the window shows what an agent did.
+    // The pointer file (port + token beside the library) is what the
+    // `quire.exe mcp` stdio bridge reads.
+    //
+    // The address and the two client configs resolve whether or not the
+    // server starts: the MCP page has to show what a *disabled* server would
+    // answer on too — and reuse it untouched when the toggle turns on. A
+    // config that only appears once the server runs is a config the user
+    // cannot paste into an agent in advance.
+    let mcp_enabled = launch.mcp || state.setting_flag("mcp.enable");
+    let mcp_port = state
+        .setting_str("mcp.port")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(quire::mcp::DEFAULT_PORT);
+    // The token lives in settings: minted on the first enabled start, then
+    // every start reuses it, so a configured client survives a restart.
+    let mcp_token = match state.setting_str("mcp.token") {
+        Some(t) if !t.is_empty() => t,
+        _ if mcp_enabled => {
+            let t = quire::mcp::mint_token();
+            state.record_setting("mcp.token", &t);
+            t
+        }
+        _ => String::new(),
+    };
+    {
+        let g = ui.global::<quire::UIState>();
+        g.set_mcp_endpoint(format!("127.0.0.1:{mcp_port}").into());
+        g.set_mcp_running(false);
+        if !mcp_token.is_empty() {
+            // stdio 走 exe 路径 + `mcp` 子命令，HTTP 直连 127.0.0.1 +
+            // Bearer；serde_json 负责转义 Windows 路径里的反斜杠。
+            let exe = std::env::current_exe()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            let pretty = |v: serde_json::Value| {
+                serde_json::to_string_pretty(&v).unwrap_or_default()
+            };
+            g.set_mcp_config_stdio(
+                pretty(serde_json::json!({
+                    "mcpServers": { "quire": { "command": exe, "args": ["mcp"] } }
+                }))
+                .into(),
+            );
+            g.set_mcp_config_http(
+                pretty(serde_json::json!({
+                    "mcpServers": { "quire": {
+                        "url": format!("http://127.0.0.1:{mcp_port}"),
+                        "headers": { "Authorization": format!("Bearer {mcp_token}") }
+                    }}
+                }))
+                .into(),
+            );
+        }
+    }
+    if mcp_enabled && !mcp_token.is_empty() {
+        let (job_tx, job_rx) = std::sync::mpsc::channel::<quire::app::mcp_tools::McpJob>();
+        let call: quire::mcp::CallFn = quire::app::mcp_tools::job_sender(job_tx);
+        let server = quire::mcp::McpServer::new(
+            mcp_port,
+            mcp_token.clone(),
+            quire::app::mcp_tools::tool_defs(),
+            call,
+        );
+        // The bind runs here, on the thread that can still answer the UI. It
+        // used to sit inside the spawned closure, so a port that would not open
+        // died on a stderr the release build does not have — while the MCP page
+        // went on showing 「服务运行中」 and the log went on claiming 「已启动」.
+        // What the page reads is now the bind's own answer.
+        match server.bind() {
+            Ok(listener) => {
+                std::thread::spawn(move || server.serve(listener));
+                // The bridge reads port + token from beside the library — the
+                // same placement rules the session itself resolved, so a --db
+                // library carries its own pointer file.
+                let pointer_dir = quire::storage::data_location::data_dir(&quire::storage::data_location::LaunchOptions {
+                    db_override: launch.db.clone(),
+                    portable: launch.portable,
+                });
+                if let Err(e) = quire::mcp::write_pointer(&pointer_dir, mcp_port, &mcp_token) {
+                    eprintln!("quire: mcp pointer write failed: {e}");
+                }
+                quire::app::mcp_tools::arm_pump(&ui, &state, job_rx);
+                // 启动本身也是日志的一条：端口写在句子里，MCP 页上读得到。
+                state.mcp_log_push("server", true, &format!("MCP 服务已启动 — 127.0.0.1:{mcp_port}"));
+                quire::app::mcp_tools::publish_log(&ui.global::<quire::UIState>(), &state);
+                ui.global::<quire::UIState>().set_mcp_running(true);
+                eprintln!("quire: mcp server on 127.0.0.1:{mcp_port}");
+            }
+            Err(e) => {
+                // No pump, no pointer file, and `mcp_running` stays at the false
+                // set above: the page reads 「已开启 — 重启 Quire 后生效」, which is
+                // the truth about a server that never opened its port.
+                state.mcp_log_push("server", false, &format!("MCP 起不来 — 127.0.0.1:{mcp_port}：{e}"));
+                quire::app::mcp_tools::publish_log(&ui.global::<quire::UIState>(), &state);
+                eprintln!("quire: mcp bind failed: {e}");
+            }
         }
     }
 

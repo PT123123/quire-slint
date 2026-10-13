@@ -2126,6 +2126,19 @@ impl AppState {
         self.settings.borrow().get(key).map(|v| v == "1").unwrap_or(false)
     }
 
+    /// Read a persisted settings string (MCP 的端口和 token 用它；flag 之外的
+    /// 第一个读者). Absent stays `None` so the caller picks its own default.
+    pub fn setting_str(&self, key: &str) -> Option<String> {
+        self.settings.borrow().get(key).cloned()
+    }
+
+    /// The organizer catalog as a snapshot (MCP 的 list_notes/list_tasks 读它).
+    /// `organizer` 本身是私有的 `RefCell`；行读取走这份克隆，写入走 org_*
+    /// 方法，两不干扰。
+    pub fn org_catalog(&self) -> OrganizerCatalog {
+        self.organizer.borrow().clone()
+    }
+
     /// A persisted settings flag whose **absence means on**: a row nobody has
     /// written reads as `default`, and only an explicit "1"/"0" decides it. A row
     /// that defaults to on cannot be stored as its own absence, which is why the
@@ -8407,6 +8420,18 @@ impl AppState {
     /// 恢复 for a task, on the same terms.
     pub fn org_restore_task(&self, id: i64) -> Option<Vec<Change>> {
         self.org_set_task_trashed(id, false)
+    }
+
+    /// 移入回收站 for MCP (`trash_note` / `trash_task`): the trash half of the
+    /// pair, exposed beside the restores because the agent surface's only
+    /// delete verb is the bin — `org_delete_note` is the hard delete the UI's
+    /// own button uses, and that verb is deliberately not on the agent's menu.
+    pub fn org_trash_note(&self, id: i64) -> Option<Vec<Change>> {
+        self.org_set_note_trashed(id, true)
+    }
+
+    pub fn org_trash_task(&self, id: i64) -> Option<Vec<Change>> {
+        self.org_set_task_trashed(id, true)
     }
 
     /// 清空回收站: every binned row of one half, purged in **one** batch — so the
@@ -15517,6 +15542,36 @@ impl AppState {
         log.drain(..cut);
         let json = serde_json::to_string(&log).unwrap_or_else(|_| "[]".into());
         self.record_setting("sync.log", &json);
+    }
+
+    // The MCP log (settings row "mcp.log"): the sync log's discipline carried
+    // over — a 50-line stored tail in one settings row, stamped by
+    // `now_rfc3339` so the age reader in the MCP page can date it. An agent's
+    // operations survive a restart, because a log that forgets itself the
+    // moment the app closes is a log nobody can audit.
+
+    pub fn mcp_log(&self) -> Vec<crate::app::mcp_tools::McpLogLine> {
+        self.setting_str("mcp.log")
+            .and_then(|v| serde_json::from_str(&v).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn mcp_log_clear(&self) {
+        self.record_setting("mcp.log", "[]");
+    }
+
+    pub fn mcp_log_push(&self, tool: &str, ok: bool, message: &str) {
+        let mut log = self.mcp_log();
+        log.push(crate::app::mcp_tools::McpLogLine {
+            at: crate::services::sync::engine::now_rfc3339(),
+            tool: tool.to_string(),
+            ok,
+            message: message.to_string(),
+        });
+        let cut = log.len().saturating_sub(50);
+        log.drain(..cut);
+        let json = serde_json::to_string(&log).unwrap_or_else(|_| "[]".into());
+        self.record_setting("mcp.log", &json);
     }
 
     /// (auto-sync on, interval seconds) from the settings rows.

@@ -4242,3 +4242,46 @@ core 遗留里最后两条（`adopt_uuids` 按整型 id 归并 uuid、影子 := 
 
 
 
+
+## MCP：让外部 Agent 从协议侧加笔记、加任务（2026-10-13，ADR-0153、ADR-0154）
+
+要的事：笔记和任务不只靠键盘加。把库接给支持 MCP 的客户端，让对话里的
+Agent 直接把东西写进来。
+
+**定下来的几件事**（理由见 ADR-0154）：
+
+- 应用仍然是唯一的写者。第二个进程开同一个 SQLite 会撞 id —— watermark 在
+  应用的内存里（core ADR-0067 caller-allocates）；而防抖落盘又让外部写进来的
+  行进不了开着的界面。所以 `tools/call` 一律翻译成 `AppState::org_*`，跟键盘
+  同一条漏斗：当场看得见，Ctrl+Z 撤得回。
+- 工具面只有笔记与任务各 `list/create/update/trash/restore` 十个。页面不在协议
+  里。删除只有「移到回收站」，`org_delete_note` 那个硬删不给 Agent。
+- 传输两种：应用内嵌 HTTP（`127.0.0.1` + Bearer token，一 POST 一 JSON-RPC），
+  外加 `quire.exe mcp` 的 stdio 桥给「spawn 子进程」那种客户端。桥从库旁边的
+  `mcp.json` 取端口和 token；只有端口没有 token 就拒绝启动。
+- 端口 5880。第一版写的 5878 是 `SYNC_PORT`，两边同时 bind 成功只因为
+  `controller::wire` 先绑、MCP 后绑；顺序一换开 MCP 就静默打死跨设备同步。
+- 默认关：`--mcp` 或设置里 `mcp.enable`（改这个要重启）。设置多一页 MCP，
+  给开关、状态、两段可复制的配置、以及 `mcp.log` 最近 50 条。
+
+**这一轮实测**（release 产物 + 临时库，没动 `AppData/Roaming/Quire`）：
+
+```
+tools/list = 10
+create_note → {"id":1}   create_task → {"id":1}
+list_notes  → tags ["验证","e2e"]      list_tasks → due 2026-10-20 priority high
+update_task done → trash_task → restore_task → done:true trashed:false
+create_note{}      → isError 缺少或非法参数：title
+delete_note        → isError 未知工具            ← 硬删真的不可达
+wrong token        → 401 {"error":"unauthorized"}
+cargo test --lib mcp:: → 7 passed
+```
+
+**顺手修的三处**：`WRITES` 少列 `restore_task`（写进库但界面不重读，回给 Agent
+的还是 ok）；`set_mcp_running(true)` 原来不看 bind 结果（端口没开页面也说「服务
+运行中」）；速记白线那条门的断言 `!= Some(false)` 在这台机上等于没问 —— 现在印
+`dwm-border=unreadable|suppressed|still-there`，规则不收紧。
+
+**没验的**：工具面十个臂没有单元门（靠上面的活体往返）；MCP 页只验到 binding
+与 globals 读回，像素没看；泵是 250ms 一跳，所以 Agent 看到的写入最坏晚四分之
+一秒；白线在屏幕上到底还在不在，只有眼睛能判。

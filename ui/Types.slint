@@ -425,6 +425,17 @@ export struct SyncLogRow {
     message: string,
 }
 
+// One line of the MCP page's log (settings row "mcp.log"), newest first — the
+// same stored-tail discipline the sync log follows, with the age Rust computed
+// at publish time rather than an absolute clock (the sync log's reason: a stamp
+// that is quietly eight hours off is worse than "3 分钟前").
+export struct McpLogRow {
+    when: string,
+    tool: string,
+    ok: bool,
+    message: string,
+}
+
 export struct SearchRow {
     page-id: int,
     title: string,
@@ -691,6 +702,20 @@ export global UIState {
     // LAN sharing (read-only server on :5877); persisted, restart applies
     in-out property <bool> lan-sharing: false;
     callback toggle-lan-sharing();
+    // MCP server for AI agents (127.0.0.1:5880); persisted, restart applies
+    in-out property <bool> mcp-enabled: false;
+    callback toggle-mcp();
+    // The MCP page's own facts, all Rust's: whether the endpoint is up in this
+    // run, the address it answers on, and the two ready-to-paste client
+    // configs (empty while no token exists yet — a config without its token
+    // is a sentence half-typed). The log is the same stored tail the sync
+    // page keeps, published newest first.
+    in-out property <bool> mcp-running: false;
+    in-out property <string> mcp-endpoint: "";
+    in-out property <string> mcp-config-stdio: "";
+    in-out property <string> mcp-config-http: "";
+    in-out property <[McpLogRow]> mcp-log;
+    callback mcp-log-cleared();
     // LAN sync (crate::services::sync): the devices on this network, the last line
     // the engine said, and the switch that lets the periodic round run by itself.
     // The rows are Rust-built from the peers table (settings row "sync.peers").

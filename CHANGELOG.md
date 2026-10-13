@@ -24,6 +24,18 @@
   它仍然压过 取消, 主次关系没丢, 只是不再用色相表达
 - `quire-shot --click/--key` 的探针补上 `capture-open`: 此前它看不见笔记
   composer, 而那恰恰是最需要这个探针的一次
+- **速记那条白线归 DWM 管，样式位不是开关** (ADR-0153). 两条线两个主人: 卡片自己画的
+  `border-strong` 由 `outlined: false` 去掉 (ADR-0152), 另一条是外壳画的, `.slint`
+  够不到。清 `WS_EX_WINDOWEDGE` 实测无效 —— 写下去再读回来 `style=0x40198
+  after=0x40198`、`SetWindowPos` 返 1, 位还在。改成问 DWM: `DWMWA_BORDER_COLOR=
+  DWMWA_COLOR_NONE` + `DWMWA_WINDOW_CORNER_PREFERENCE=DWMWCP_DONOTROUND` (圆角也归它
+  管), 再补一次 `SWP_FRAMECHANGED`, 因为外壳是从一份锁存的副本上画框的
+- **门里那条「边缘没有白线」原来是空过的** (ADR-0153). 它写的是 `!= Some(false)`,
+  而这台机 (10.0.26200) 上 `DwmGetWindowAttribute(34)` 直接 `0x80070057` 不肯答,
+  于是「DWM 说没有」和「DWM 不肯答」在门里是同一个值。现在每段都印
+  `dwm-border=unreadable|suppressed|still-there`, 规则本身**不**收紧: 一条在问不到的
+  平台上必红的门没人敢信, 宁可绿着并把「绿得不完整」写在行里。圆角那半边读得回来
+  (外部探针 `Get CORNER hr=0 val=1`); 白线在屏幕上到底还在不在, 只有你眼睛能判
 
 ### 存储
 
@@ -228,6 +240,41 @@
   保留量化到天的 last_seen: 每台活跃设备每天最多多一次持久写, 换来「最后在线」
   跨重启仍然有意义、30 天淘汰有了可以 aging 的依据。旧版本留下的 last_seen=0 的行
   不会被自动淘汰 (无法 aging), 由「淘汰离线设备」清掉
+
+### MCP 接入
+
+- **Agent 写库走的是键盘那条漏斗** (ADR-0154). `src/mcp.rs` 是协议核心 + 内嵌 HTTP +
+  stdio 桥, `src/app/mcp_tools.rs` 是工具面, 设置里多一页 MCP。十个工具: 笔记与任务
+  各 `list/create/update/trash/restore`。每个调用翻译成 `AppState::org_*` →
+  `exec_org` → record, 跟一次键击同一条路, 所以改动当场看得见、Ctrl+Z 撤得回。没做成
+  第二个进程直连 SQLite: id 的 watermark 在应用的内存里 (core ADR-0067
+  caller-allocates), 两个写者撞号; 而防抖落盘的管线让外部写进来的行根本进不了开着的界面
+- **只有「移到回收站」这一个删除动词** (ADR-0154). `trash_*` 打 `deleted_at`,
+  `restore_*` 擦掉它; UI 自己按钮用的硬删 `org_delete_note` 不在 Agent 的菜单上,
+  `delete_note` 这个工具名不存在, 调用得到 `未知工具`。页面整个不在协议里 —— 没有
+  页面读、没有页面写、没有页面删
+- **两种传输, 都只在本机** (ADR-0154). HTTP 服务内嵌在运行中的应用: `127.0.0.1`,
+  Bearer token (`Authorization` 或 `X-Quire-Token`), 一条 POST 一个 JSON-RPC。
+  `quire.exe mcp` 是给「spawn 个子进程说 stdio」那种最普遍的客户端用的桥, 它不开
+  数据库也不开窗口, 端口和 token 从库旁边的 `mcp.json` 读, 逐行转发。**只有端口没有
+  token 时桥拒绝启动**, 不静默降级 —— token 是唯一的门, 缺了它谁拿到端口谁就能写库
+- **端口从 5878 挪到 5880** (ADR-0154). 5878 是 `services::sync::SYNC_PORT`, 每台
+  Quire 都在那儿听, ADR-0128 数设备靠的就是「5878 答不答话」。两个 bind 同时成立只
+  是因为 `controller::wire` 先绑 `0.0.0.0:5878`、MCP 后绑 `127.0.0.1:5878`; 顺序一换,
+  开 MCP 就把跨设备同步静默打死, 而失败只写在 release 版根本没有的 stderr 上。实测
+  过: 本机局域网 IP 的 `:5878/mcp` 回 404 `not found` (那是同步的 listener),
+  `127.0.0.1:5878/mcp` 回的才是 MCP —— loopback-only 是 bind 顺序蒙出来的, 不是属性
+- **页面报的是 bind 的结果, 不是意图** (ADR-0154). 原来 `set_mcp_running(true)` 在
+  `thread::spawn` 之后无条件就设, 端口没开也照样显示「服务运行中 · …」, 日志照写「MCP
+  服务已启动」。现在 bind 在 UI 线程上做: 成功才写指针文件、装泵、亮页面; 失败记「MCP
+  起不来 — 127.0.0.1:5880：<原因>」、running 保持 false、**并且不留一个指针文件让桥
+  老老实实往死端口上转**
+- **补上 `restore_task` 不刷新的漏** (ADR-0154). `WRITES` 那张表八个写动词只列了七个,
+  少的是 `restore_task`: 恢复任务写进了库, 界面却不重读目录, 要等下一次别的刷新, 而
+  回给 Agent 的已经是 `{"ok":true}`。计数 7 → 8
+- **MCP 日志一设置行存最近 50 条** (ADR-0154). 哪个工具、成没成、一句人话, 抄的是
+  `sync.log` 的动作; 年龄跟同步行用同一个 5 秒钟重算, 所以 Agent 干过什么重启之后还
+  查得到
 
 ### 部署
 

@@ -507,6 +507,9 @@ fn start_sync(ui: &AppWindow, state: &Rc<AppState>, awaited: Awaited) {
             if answered || due {
                 last_refresh.set(std::time::Instant::now());
                 refresh_sync_ui(&g, &s, &awaited);
+                // MCP 日志的年龄跟着同一个 5 秒钟摆重算：sync 的行会变旧，
+                // Agent 的行没有理由停在入栈那一刻。
+                crate::app::mcp_tools::publish_log(&g, &s);
             }
             let (auto, interval) = s.sync_config();
             if auto && last_auto.get().elapsed().as_secs() >= interval {
@@ -916,13 +919,14 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 }
 
 /// "3 分钟前" from one stored stamp — `"2026-09-23 14:05"`, UTC, written by
-/// `now_rfc3339`.
+/// `now_rfc3339`. `pub(crate)` because the MCP page's log dates its own rows
+/// with the same reader: one stamp format, one age ladder, two logs.
 ///
 /// The age rather than the clock time on purpose: the stamp carries no zone, this
 /// build has no date crate to read one, and a time eight hours off is a wrong
 /// fact on the screen where "a few minutes ago" is not. Anything unparseable is
 /// shown as it arrived rather than guessed at.
-fn sync_age_label(at: &str, now: u64) -> String {
+pub(crate) fn sync_age_label(at: &str, now: u64) -> String {
     let Some((date, time)) = at.split_once(' ') else {
         return at.to_string();
     };
@@ -1657,6 +1661,7 @@ pub fn bind(ui: &AppWindow, state: &Rc<AppState>) {
     g.set_app_version(env!("CARGO_PKG_VERSION").into());
     g.set_theme(state.theme_setting().into());
     g.set_lan_sharing(state.setting_flag("lan.share"));
+    g.set_mcp_enabled(state.setting_flag("mcp.enable"));
     g.set_sidebar_open(!state.setting_flag("sidebar.closed"));
     g.set_sidebar_width(state.sidebar_width());
     // 笔记's 启动时自动弹出输入框: absent (a library that never touched the row) is
@@ -5557,6 +5562,26 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
 
     {
         let s = state.clone();
+        ui.global::<UIState>().on_toggle_mcp(move || {
+            let on = !s.setting_flag("mcp.enable");
+            s.record_setting("mcp.enable", if on { "1" } else { "0" });
+        });
+    }
+
+    {
+        // 清空 MCP 日志：只清记录本身（sync 的 清空日志 同一个动作）——
+        // 下一条 Agent 调用照常留痕。
+        let s = state.clone();
+        let gw = ui.as_weak();
+        ui.global::<UIState>().on_mcp_log_cleared(move || {
+            let Some(g) = gw.upgrade() else { return };
+            s.mcp_log_clear();
+            crate::app::mcp_tools::publish_log(&g.global::<UIState>(), &s);
+        });
+    }
+
+    {
+        let s = state.clone();
         // The Settings row behind `org_land`'s auto-open.
         ui.global::<UIState>().on_org_auto_input_toggled(move |on| {
             s.record_setting("notes.auto_input", if on { "1" } else { "0" });
@@ -7096,7 +7121,8 @@ fn org_show(g: &UIState<'_>, state: &Rc<AppState>, tab: i32) {
 /// Re-project the area and push it into the window. The whole of "the area is
 /// out of date" is this call: `AppState::rebuild_organizer` reads the filters off
 /// `UIState` and rebuilds the three models plus the two detail rows.
-fn org_refresh(g: &UIState<'_>, state: &Rc<AppState>) {
+/// `pub(crate)`：MCP 工具的写后刷新（app::mcp_tools）与 sync 泵走同一套。
+pub(crate) fn org_refresh(g: &UIState<'_>, state: &Rc<AppState>) {
     g.set_org_today(crate::core::today_iso().into());
     state.rebuild_organizer();
 }

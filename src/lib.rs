@@ -11,6 +11,7 @@
 // when the shell starts naming `quire_core::` directly.
 
 pub mod app;
+pub mod mcp;
 pub mod platform;
 
 
