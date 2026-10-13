@@ -9348,6 +9348,123 @@ pub fn apply_scene(ui: &AppWindow, state: &Rc<AppState>, scene: &str) {
     apply_scene_body(ui, state, scene);
 }
 
+/// Frames a `--motion` capture holds still before it moves anything.
+///
+/// A scene sets a dozen properties on the way in, and every one of them is
+/// watched by an `animate background` — so the opening frames of a clip are a
+/// crossfade the clip is not about. Two pump intervals of rest, and the scene's
+/// own arrivals have landed.
+const MOTION_SETTLE_FRAMES: usize = 2;
+
+/// Stage one frame of an animated motion for `quire-shot --motion`.
+///
+/// A scene photographs a **state**; a motion photographs the **transit**, which
+/// is a different instrument: this only sets the property an `animate` block
+/// watches, and the shot binary pumps Slint's animation clock between the
+/// frames. No in-between value is computed here — every frame asks the UI with
+/// one legal property write and lets the engine's own easing answer, the same
+/// rule `apply_scene` keeps.
+///
+/// Each motion is a **round trip**, so the loop plays seamlessly: whatever the
+/// last frame shows is what the first frame showed.
+pub fn apply_motion(ui: &AppWindow, state: &Rc<AppState>, motion: &str, frame: usize, frames: usize) {
+    let g = ui.global::<UIState>();
+    if frame < MOTION_SETTLE_FRAMES {
+        return;
+    }
+    // the walking part of the clip: the last two frames settle back to rest
+    let span = frames.saturating_sub(MOTION_SETTLE_FRAMES + 2);
+    if span == 0 {
+        return;
+    }
+    let step = frame - MOTION_SETTLE_FRAMES;
+    match motion {
+        // the sidebar's own `animate width { 220ms }` — the one component in
+        // this shell that changes its *size*, so it is the clip that answers
+        // "what does a layout animation look like here"
+        "sidebar-toggle" => {
+            if step == 0 {
+                g.set_sidebar_open(false);
+            } else if step >= span {
+                g.set_sidebar_open(true);
+            }
+        }
+        // the whole window recolours through twelve `animate background` rules
+        // at once, which no single still can show
+        "theme-fade" => {
+            if step == 0 {
+                g.set_theme("midnight".into());
+            } else if step >= span {
+                g.set_theme("light".into());
+            }
+        }
+        // the MCP switch's knob travels on `animate x`; the row is on the
+        // dialog's MCP tab, which is where the page's own switch lives
+        "mcp-toggle" => {
+            // the motion stages its own view: the switch is on the dialog's MCP
+            // tab, and a clip of a knob has to be pointed at the knob. One frame
+            // *before* the flip, so the switch's item exists and has been drawn
+            // `off` — an `animate x` on a component created already-on has no
+            // change to ease from, and the clip records the click but not the
+            // slide. (That is what this arm's first version did: the gate's
+            // `distinct=1` was the whole report.)
+            if step == 0 {
+                g.set_settings_tab(3);
+            } else if step == 1 {
+                g.set_mcp_enabled(true);
+            } else if step >= span {
+                g.set_mcp_enabled(false);
+            }
+        }
+        // the pointer walks down a board column. The two seams of every card
+        // (`OrgBoardGap`, `animate height, opacity`) open as the pointer's y
+        // crosses that card's midpoint, and the column's wash comes and goes
+        // with `org-drop-list`, so this is the board's drag feedback without a
+        // drag: the picture of the thing that answers the pointer.
+        "board-drag" => {
+            let target = board_drag_column(state);
+            if step >= span {
+                g.set_org_drop_list(-2);
+                return;
+            }
+            g.set_org_drop_list(target);
+            // 160..300 window y: the two cards of a board column at 1280x800
+            // span 145..205 and 215..285, so this walk enters the first card's
+            // upper half, crosses its midpoint, leaves its lower half, and does
+            // the same to the second — four seam changes, which is what a sweep
+            // has to cross to read as one. Read off a captured frame of this
+            // clip, not computed: the first version used the y the `tasks-drag`
+            // scene quotes, and it landed under both cards.
+            let t = step as f32 / span.saturating_sub(1).max(1) as f32;
+            let ping_pong = if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 };
+            g.set_org_drop_y(160.0 + ping_pong * 140.0);
+        }
+        _ => {}
+    }
+}
+
+/// Which board column the `board-drag` clip points at: the stored list with the
+/// most **drawn** cards — a finished task is not in the column at all until the
+/// footer's switch says otherwise — because a gap has to be crossed more than
+/// once to read as a sweep. Asked of the catalog rather than hard-coded: the
+/// scene's own ids come from its creators, and a clip that guessed at one would
+/// light a column the fixture no longer fills.
+fn board_drag_column(state: &Rc<AppState>) -> i32 {
+    let catalog = state.org_catalog();
+    let mut best: Option<(i32, usize)> = None;
+    for list in &catalog.lists {
+        let n = catalog
+            .tasks
+            .iter()
+            .filter(|t| t.list == list.id && !t.done && !t.is_trashed())
+            .count();
+        if best.map_or(true, |(_, taken)| n > taken) {
+            best = Some((list.id.as_u64() as i32, n));
+        }
+    }
+    best.map(|(id, _)| id).unwrap_or(-2)
+}
+
 /// Paint the area on `tab` for a photograph.
 ///
 /// `org_show` and not `org_open`, because a scene is a *state* rather than a step:

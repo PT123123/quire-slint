@@ -183,7 +183,8 @@ that wiring decision, not the storage layer.
       find bar / link dialog / title edit): combined dark scenes added,
       all render correctly on dark surfaces
 - [x] find-as-you-type (session rebuilds per keystroke)
-- [x] README screenshots (docs/screenshots, 6 shots) + window size
+- [x] README media (docs/clips, 4 motion GIFs + a measured memory table; the
+      earlier docs/screenshots stills were retired for it, ADR-0155) + window size
       persistence (settings table, restore before first paint, save at
       close) + version footer cleanup
 - [x] M8_FEEDBACK all 8 items triaged: 4 resolved, 2 accepted with

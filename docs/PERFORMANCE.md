@@ -2107,3 +2107,60 @@ is the one this file already publishes for `backup::snapshot` — **22.7 – 48.
 arithmetic rather than measurement is the *count*: 15 transactions per minute, and one
 whole-file copy per ten minutes, neither of which the user's session asked for.
 
+## v0.1.26 · the matrix re-run for the README's numbers (2026-10-13)
+
+The repository's front page now carries a memory table instead of screenshots, so
+the rows had to come from the artifact a user actually runs. `-Exe
+target\release\quire.exe`, and that file is byte-identical to the deployed
+`C:\workshop\quire-desktop-0.1.26\quire.exe` (both SHA-256
+`295BB6BC…301053B`), so the arm below is the shipped build rather than a rebuild
+of it. FemtoVG, 100% scale, same machine as every row above. Rows are the
+measured pass of each scene (the `-seed` pass writes the fixture and is
+discarded); `benchmarks/scripts/bench_matrix.ps1 -Tag v0.1.26`, raw lines in
+`benchmarks/results/2026-10-13-v0126-matrix.jsonl`.
+
+| scene | startup ms | idle CPU % of one core | WS MB | Private MB |
+|-------|-----------:|-----------------------:|------:|-----------:|
+| A empty shell | 594 | 0.98 | 107.8 | 79.1 |
+| B 100 blocks | 603 | 0.39 | 108.4 | 79.4 |
+| B 1 000 blocks | 597 | 0.20 | 109.7 | 80.9 |
+| C 5 000 blocks | 645 | 0.20 | 116.2 | 87.1 |
+| D 10 000 blocks | 656 | 0.00 | 124.1 | 95.2 |
+| F 10 000 blocks, continuous scroll | 648 | 1.17 | 124.1 | 95.3 |
+| G 100-page switching | 593 | 0.39 | 108.5 | 79.4 |
+| E typing 10 000 blocks, 30/s, search every 100 | 1267 | 24.77 | 165.7 | 126.2 |
+
+Reading:
+- **Virtualization holds at this size**: 10 000 blocks cost +16.3 MB Working Set
+  and +16.1 MB Private over the empty shell — 1.6 kB a block, which is a model
+  row and a measured layout, not a Slint element each.
+- **Idle is idle**: 0.98 % of one core for the shell, and scene F — a scroll
+  running for the whole sample window — costs 1.17 %. That F row is 16× below the
+  M2 baseline's 19.49 %, and the difference is the 2026-09-21 correction above
+  (the old timer drove `content-y` the wrong way, so the "scroll" never scrolled
+  and every frame was a full repaint of a page that had not moved).
+- Scene E is the only arm off idle, and its own report is the number to quote:
+  handler median **94 µs** / p95 **173 µs** / max **429 µs** over 343 keystrokes
+  at an achieved 30.035/s, with a full-text search every 100 strokes at median
+  **1.79 ms**.
+- Startup here is `bench.ps1`'s window-handle-up interval. **`first_paint_ms` is
+  missing from this section on purpose**: `startup_bench.ps1` recorded no
+  first-paint line for any of five runs of this build (`no first_paint line
+  (exit 0)`), while the same exe run by hand does open a 118 MB window and paint
+  it. A silent `--measure-startup` is not evidence of an unframed window —
+  §"Method" already says that of skia — so the first-paint column keeps its
+  2026-09-20 values and the instrumentation gap is the finding, not the number.
+
+**Method finding, and the one that cost the most time.** The first pass of this
+matrix produced a 22.8 MB Working Set for the empty shell and 0 MB for its own
+measured pass, and every row looked like a process that had already left. That
+is ADR-0136 working as designed: a launch of the *same* version against a live
+session announces itself to the running one and exits before opening a database,
+so `bench.ps1` sampled a dead PID and `Get-Process` handed back zeros under
+`SilentlyContinue`. **No scene row means anything unless the session slot was
+free when it ran.** The exit code stays 0 either way, so the tell is the shape:
+a Working Set far below the shell's own floor, or a 0 in a column that cannot be
+0. Quitting the live instance through its own `\\.\pipe\quire-desktop-quit`
+channel (write `quit`, read `ok`) is the reversible way to clear it; the
+measured rows above are from a run with the slot empty.
+

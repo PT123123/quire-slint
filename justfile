@@ -54,6 +54,13 @@ shot scene="default":
     .\target-shot\debug\quire-shot.exe --out .scratch\shots\latest.bmp --scene {{ scene }}
     powershell -NoProfile -ExecutionPolicy Bypass -File benchmarks\scripts\shot2png.ps1
 
+# The README's clips: one headless motion capture per animation, into docs\clips.
+# A clip that did not interpolate is a GIF of a jump, so the recipe fails the
+# run when a motion's distinct-frame count is under its own floor.
+clips:
+    cargo build --features software --bin quire-shot --target-dir target-shot
+    powershell -NoProfile -ExecutionPolicy Bypass -File benchmarks\scripts\clips.ps1 -Shot target-shot\debug\quire-shot.exe -GifW 320 -Frames 14
+
 # package the release exe into a zip (M8-lite; installer comes later)
 dist:
     cargo build --release

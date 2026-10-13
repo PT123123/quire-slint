@@ -306,6 +306,19 @@
   far smaller
 - **`$CARGO_HOME`'s 2.8 GB registry cache is now auto-cleaned**
   (`cache.auto-clean-frequency`, stable since Rust 1.88)
+- **`quire-shot --motion` 会录动图了** (ADR-0155). headless 平台不再沿用默认的
+  `std::time::Instant`, 而是读一个由录制循环按 `--frame-ms` 推进的计数器 ——
+  Slint 的 property transition 就是问平台要时间，所以这一步让「中间帧」存在。
+  按墙上时钟采样试过一次: 22 帧只有 2 张不同, 因为 debug 构建画一张 1280×800
+  比它要录的 220 ms 动画还慢, 每一帧都落在动画结束之后
+- **`just clips` 会拒绝一条没动的 GIF** (ADR-0155). 每条 motion 的帧都留成 PNG
+  并算 hash, 不同帧数低于自己的下限就红。第一次跑就抓到两个真 bug:
+  `mcp-toggle` 的 `distinct=1` 是因为翻开关那一步写在早退 `return` 后面根本到不了
+  (也就是这个「动画」从来没插值过), `board-drag` 则是扫的 y 区间抄自另一条 scene
+  的注释, 点亮的是两张卡下面的空白
+- **README 上换成四条 GIF + 一张实测表**: 七张静态截图 (778 KB) 移出仓库
+  (`.quarantine-2026-10-13/`), 四条 320 px 的 GIF 合计 693 KB。倍速是写明在页面上的
+  —— `SLINT_SLOW_ANIMATIONS=4`, 因为 80 ms 的淡入在任何能进 GIF 的帧率下都只有两帧
 
 ## 0.1.0 — Windows RC (in progress)
 

@@ -9,23 +9,59 @@
 // Build: cargo build --features software --bin quire-shot
 // Usage: quire-shot --out shot.bmp [--scene menu] [--w 1280] [--h 800]
 //        [--click x,y] [--key escape]
+//        quire-shot --motion sidebar-toggle --scene default --gif clip.gif
+//                   [--frames 20] [--frame-ms 40] [--gif-w 560] [--seq-dir dir]
 //
 // --click/--key dispatch a real input event through the window after the
 // first render (and after the scene overlay), then re-render and print a
 // probe line with the open/closed state of every popup. This is what
 // verifies the close-on-click-outside behavior headlessly.
+//
+// --motion captures the *transit* rather than a state. The frames are not
+// screenshots and not a redraw: Slint's animation tick is
+// `Platform::duration_since_start()`, which this binary owns (see CLOCK), so
+// frame k is the UI's own state at exactly k × --frame-ms into the motion — an
+// `animate width { 220ms }` drawn at 40 ms, 80 ms, 120 ms… The property write
+// per frame is `controller::apply_motion`, which writes the same property a
+// real click would, and the easing is the engine's.
 
+use image::codecs::gif::{GifEncoder, Repeat};
+use image::imageops::FilterType;
+use image::{Delay, Frame, ImageBuffer, ImageFormat, RgbaImage};
 use quire::app::controller;
 use quire::app::state::{AppState, HandleArgs};
 use quire::{AppWindow, UIState};
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
 use slint::platform::{Platform, PlatformError, PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, Model, PhysicalSize, Rgb8Pixel, SharedPixelBuffer, SharedString};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Duration;
 
 thread_local! {
     static WINDOW: RefCell<Option<Rc<MinimalSoftwareWindow>>> = const { RefCell::new(None) };
+    /// `--motion` drives Slint's clock by hand. The animation tick is
+    /// `Platform::duration_since_start()`, so returning a counter the frame loop
+    /// moves makes frame N be exactly `N × --frame-ms` into the motion.
+    ///
+    /// A wall-clock sleep cannot do that: rasterising 1280×800 in a debug build
+    /// takes longer than the 220 ms the sidebar animates over, so every sample
+    /// lands after the tween is finished and the clip records a jump while
+    /// claiming a motion. Measured, not assumed — the first version of this file
+    /// slept, and 22 frames came out as two distinct images.
+    static CLOCK: Cell<Option<u64>> = const { Cell::new(None) };
+}
+
+/// Nothing but the trait's own wall clock: `HeadlessPlatform` falls back to it
+/// when no `--motion` capture is running, so a single-shot sweep keeps the
+/// timing it has always had. Calling the default through a second type is the
+/// only way to reach it without recursing into this one.
+struct WallClock;
+
+impl Platform for WallClock {
+    fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
+        unreachable!("used only for Platform::duration_since_start's default")
+    }
 }
 
 struct HeadlessPlatform;
@@ -35,6 +71,13 @@ impl Platform for HeadlessPlatform {
         let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
         WINDOW.with(|slot| *slot.borrow_mut() = Some(window.clone()));
         Ok(window)
+    }
+
+    fn duration_since_start(&self) -> Duration {
+        match CLOCK.with(|c| c.get()) {
+            Some(ms) => Duration::from_millis(ms),
+            None => WallClock.duration_since_start(),
+        }
     }
 }
 
@@ -89,6 +132,149 @@ fn parse(args: &[String], key: &str) -> Option<String> {
         .position(|a| a == key)
         .and_then(|i| args.get(i + 1))
         .cloned()
+}
+
+/// The rendered buffer as an RGBA image (the GIF encoder's currency).
+fn to_rgba(buffer: &SharedPixelBuffer<Rgb8Pixel>) -> RgbaImage {
+    let px: Vec<u8> = buffer
+        .as_bytes()
+        .chunks_exact(3)
+        .flat_map(|p| [p[0], p[1], p[2], 255])
+        .collect();
+    ImageBuffer::from_raw(buffer.width(), buffer.height(), px).expect("frame matches pixel count")
+}
+
+/// Draw one frame now and hand back its pixels, downscaled to `small` wide
+/// when `small` is set. The scale-down is the whole reason a clip of this shell
+/// is a few hundred kilobytes rather than a few megabytes.
+fn grab(window: &Rc<MinimalSoftwareWindow>, w: u32, h: u32, small: u32) -> Option<RgbaImage> {
+    window.request_redraw();
+    let drew = window.draw_if_needed(|renderer| {
+        let mut buffer = SharedPixelBuffer::<Rgb8Pixel>::new(w, h);
+        let stride = buffer.width() as usize;
+        renderer.render(buffer.make_mut_slice(), stride);
+        BUFFER.with(|b| *b.borrow_mut() = Some(buffer));
+    });
+    if !drew {
+        return None;
+    }
+    BUFFER
+        .with(|b| b.borrow_mut().take())
+        .map(|buffer| {
+            let img = to_rgba(&buffer);
+            if small > 0 && img.width() > small {
+                let gh = (small as u64 * img.height() as u64 / img.width() as u64) as u32;
+                image::imageops::resize(&img, small, gh, FilterType::Lanczos3)
+            } else {
+                img
+            }
+        })
+}
+
+/// Encode the frames into an animated GIF that loops forever.
+///
+/// Consecutive identical frames are merged into the previous one's delay: a
+/// motion holds still at both ends (the settle before it starts, the rest after
+/// it lands), and a GIF writes every frame as its own full image, so those
+/// stills cost a copy of the whole window each.
+fn encode_gif(path: &str, frames: &[RgbaImage], frame_ms: u32) -> Result<(), String> {
+    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+    let mut enc = GifEncoder::new(file);
+    enc.set_repeat(Repeat::Infinite).map_err(|e| e.to_string())?;
+    let mut held: u32 = 0;
+    let mut prev: Option<&RgbaImage> = None;
+    for img in frames {
+        if prev == Some(img) {
+            held += frame_ms;
+            continue;
+        }
+        // the frame being emitted carries every duplicate before it
+        let delay = held + frame_ms;
+        held = 0;
+        enc.encode_frame(Frame::from_parts(img.clone(), 0, 0, Delay::from_numer_denom_ms(delay, 1)))
+            .map_err(|e| e.to_string())?;
+        prev = Some(img);
+    }
+    Ok(())
+}
+
+fn write_png(img: &RgbaImage, path: &str) -> Result<(), String> {
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    img.save_with_format(path, ImageFormat::Png).map_err(|e| e.to_string())
+}
+
+/// `--motion`: capture the transit, not the state.
+///
+/// Slint eases an `animate` block against the platform clock and nothing else,
+/// so the clock is the whole instrument: `CLOCK` steps it by `--frame-ms` and
+/// `update_timers_and_animations()` — the pump an event loop would run at the
+/// top of each iteration, and there is no event loop here — publishes it to
+/// every binding that read the tick while it was evaluating. A sweep could never
+/// show a motion because it never pumped.
+fn capture_motion(
+    ui: &AppWindow,
+    state: &Rc<AppState>,
+    motion: &str,
+    scene: Option<&str>,
+    w: u32,
+    h: u32,
+    frames: usize,
+    frame_ms: u32,
+    gif_w: u32,
+    out_gif: Option<&str>,
+    seq_dir: Option<&str>,
+) -> Result<(), String> {
+    let window = WINDOW
+        .with(|slot| slot.borrow().clone())
+        .ok_or("window adapter")?;
+    // The scene has to be laid out before a property change can animate: an
+    // element that has never been positioned eases from a zero, and a clip
+    // that opens with a jump documents an animation the app never plays.
+    if !render(w, h) {
+        return Err("window never requested a redraw".into());
+    }
+    if let Some(scene) = scene {
+        controller::apply_scene_overlay(ui, state, scene);
+    }
+    let mut shots: Vec<RgbaImage> = Vec::with_capacity(frames);
+    for k in 0..frames {
+        // one step of virtual time per frame, then the pump that publishes it:
+        // `update_timers_and_animations` reads the clock through the platform,
+        // so this is the whole of what makes the tween sample instead of skip
+        CLOCK.with(|c| c.set(Some((k as u64 + 1) * frame_ms as u64)));
+        controller::apply_motion(ui, state, motion, k, frames);
+        slint::platform::update_timers_and_animations();
+        match grab(&window, w, h, gif_w) {
+            Some(img) => shots.push(img),
+            None => return Err(format!("frame {k} drew nothing")),
+        }
+    }
+    if shots.len() < frames {
+        return Err("frame count short".into());
+    }
+    // A still sequence is the proof: an interpolated motion shows up as
+    // successive frames differing, which a GIF alone cannot be checked for
+    // without a viewer. `diffbbox.ps1` compares two of these.
+    if let Some(dir) = seq_dir {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        for (k, img) in shots.iter().enumerate() {
+            write_png(img, &format!("{dir}/f{k:03}.png"))?;
+        }
+    }
+    let gif = out_gif.unwrap_or("quire-motion.gif");
+    if let Some(parent) = std::path::Path::new(gif).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    encode_gif(gif, &shots, frame_ms)?;
+    let bytes = std::fs::metadata(gif).map(|m| m.len()).unwrap_or(0);
+    println!("wrote {gif} ({} frames, {frames}@{frame_ms}ms, {bytes} bytes)", shots.len());
+    Ok(())
 }
 
 /// Print the open/closed state of every popup (the --click/--key probe).
@@ -153,9 +339,17 @@ fn run() -> Result<(), String> {
     let scene = parse(&argv, "--scene");
     let w: u32 = parse(&argv, "--w").and_then(|v| v.parse().ok()).unwrap_or(1280);
     let h: u32 = parse(&argv, "--h").and_then(|v| v.parse().ok()).unwrap_or(800);
+    let motion = parse(&argv, "--motion");
 
     slint::platform::set_platform(Box::new(HeadlessPlatform))
         .map_err(|e| format!("set_platform: {e:?}"))?;
+    // A motion capture owns the clock from here on, and it has to be armed
+    // before the component is built: `AppWindow::new()` lays the tree out at the
+    // current tick, and a tick that moved backwards to 0 later would trip
+    // Slint's monotonic-clock assertion.
+    if motion.is_some() {
+        CLOCK.with(|c| c.set(Some(0)));
+    }
 
     let ui = AppWindow::new().map_err(|e| e.to_string())?;
     ui.window().set_size(PhysicalSize::new(w, h));
@@ -213,6 +407,30 @@ fn run() -> Result<(), String> {
         ui.global::<UIState>().set_editor_scroll_y(v);
     }
     ui.show().map_err(|e| e.to_string())?;
+
+    // --motion replaces the single-shot path: it owns its own first render,
+    // because a frame sequence needs the window laid out *before* the property
+    // that animates is written.
+    if let Some(motion) = motion {
+        let frames: usize = parse(&argv, "--frames").and_then(|v| v.parse().ok()).unwrap_or(20);
+        let frame_ms: u32 = parse(&argv, "--frame-ms").and_then(|v| v.parse().ok()).unwrap_or(40);
+        let gif_w: u32 = parse(&argv, "--gif-w").and_then(|v| v.parse().ok()).unwrap_or(560);
+        let gif = parse(&argv, "--gif");
+        let seq = parse(&argv, "--seq-dir");
+        return capture_motion(
+            &ui,
+            &state,
+            &motion,
+            scene.as_deref(),
+            w,
+            h,
+            frames,
+            frame_ms,
+            gif_w,
+            gif.as_deref(),
+            seq.as_deref(),
+        );
+    }
 
     let drawn = render(w, h);
     if !drawn {

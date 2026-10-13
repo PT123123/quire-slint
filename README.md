@@ -3,20 +3,45 @@
 A local, GPU-accelerated, Notion-like document workspace.
 Rust + Slint. Single process. No Electron, no WebView, no web stack.
 
-![Quire in light mode](docs/screenshots/light-getting-started.png)
-
 | | |
 |---|---|
-| ![Dark](docs/screenshots/dark.png) | ![Slash menu](docs/screenshots/slash-menu.png) |
-| ![Inline marks](docs/screenshots/inline-marks.png) | ![Find bar](docs/screenshots/find-bar.png) |
+| ![The sidebar sliding open](docs/clips/sidebar.gif)<br>the sidebar sliding open | ![The theme cross-fading](docs/clips/theme.gif)<br>the theme cross-fading |
+| ![A card dropped into a board column](docs/clips/board-drag.gif)<br>a card dropped into a board column | ![A setting switched in Settings](docs/clips/mcp-toggle.gif)<br>a setting switched in Settings |
 
-More shots in [docs/screenshots](docs/screenshots).
+Every frame above is the running app's own interpolation, not a redraw of it:
+`quire-shot --motion` drives Slint's animation clock one step per frame and
+encodes what the renderer produced, so a clip cannot show a tween the binary
+does not have. Captured headless at 1280×800 through the software renderer,
+scaled to 320 px, and played back at a quarter of real speed because an
+80 ms fade is two frames at any sane frame rate. `just clips` regenerates
+them and fails the run if a clip's middle frames did not move.
+
+## Measured
+
+v0.1.26 release build, FemtoVG renderer, Intel Core Ultra 9 185H · 32 GB ·
+Windows 11 26200, 100% scale. CPU is percent of **one** core (this chip has 16).
+
+| scene | startup ms | idle CPU % | Working Set MB | Private MB |
+|-------|---------:|-----------:|---------------:|-----------:|
+| empty shell | 594 | 0.98 | 107.8 | 79.1 |
+| 1 000 blocks | 597 | 0.20 | 109.7 | 80.9 |
+| 10 000 blocks | 656 | 0.00 | 124.1 | 95.2 |
+| 10 000 blocks, continuous scroll | 648 | 1.17 | 124.1 | 95.3 |
+| 100-page switching | 593 | 0.39 | 108.5 | 79.4 |
+| typing at 30 keystrokes/s into 10 000 blocks | 1267 | 24.77 | 165.7 | 126.2 |
+
+Reading it: a 10 000-block page costs 16 MB of Working Set over the empty
+shell, because only the rows on screen are built, and an idle window costs
+under 1% of a core. Reproduce with
+`benchmarks/scripts/bench_matrix.ps1 -Exe target\release\quire.exe`; the
+method, the caveats and every previous milestone are in `docs/PERFORMANCE.md`.
 
 ```
 just build                    # cargo build --release (default FemtoVG renderer)
 just run                      # cargo run (debug)
 just check                    # local CI replacement: check + test + release
 just shot menu                # headless visual shot (scene name optional)
+just clips                    # regenerate docs/clips, failing if a clip did not interpolate
 just dist                     # package the release exe into dist/quire-windows-x64.zip
 just deploy-workshop          # bump the patch, build, deploy into C:\workshop
 just release-publish          # bump the patch, build, publish on GitHub (installer + zip)

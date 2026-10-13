@@ -8003,3 +8003,62 @@ the live round trip above, not by the crate's own gate; the MCP settings page is
 checked by binding and reading globals, not by pixels; and the pump's 250 ms latency
 is measured only as "the reply came", so an Agent that expects a synchronous write
 still sees up to a quarter-second of lag.
+
+## ADR-0155 · The README shows movement, so the shot binary owns the animation clock — record the app's own frames, and fail a clip whose middle did not move
+
+**A still cannot show an animation, and a recorded screen is not evidence about
+this app.** The front page carried seven PNGs (~778 KB) that proved layout and
+nothing else, in a project whose stated priority list puts UI visual quality
+first. The obvious way to get movement — capture the desktop while something
+moves — was out for two independent reasons: this machine's standing rule against
+scripted desktop UI (screen grabs and synthetic clicks are both blocked and both
+unreliable), and the deeper one that a screen recording of a window proves the
+recorder worked, not that the app interpolated. So `quire-shot` grew
+`--motion <name>`, and the four clips now on the README are frames the running
+app rendered.
+
+**The clock is the whole trick.** Slint asks its platform for time
+(`Platform::duration_since_start` → `Instant::now` → every property transition),
+and the headless platform had been inheriting the default `std::time::Instant`.
+Sampling that on wall time produced **two distinct frames out of twenty-two**: a
+debug-build rasterization of 1280×800 takes longer than the 220 ms being
+interpolated, so every sample landed after the tween finished. The fix is not a
+faster machine — `HeadlessPlatform::duration_since_start` now reads a thread-local
+counter that the capture loop advances by `--frame-ms` before each redraw, and
+falls back to the real clock when the counter is unset so `set_platform`'s own
+startup pump still sees sane time. With the counter, the frames between the two
+ends exist, and they are the app's easing curve rather than a re-drawing of it.
+
+**A clip has to prove it moved.** `benchmarks/scripts/clips.ps1` keeps every
+frame as a PNG, hashes them, and fails the run when a motion's distinct count
+drops under its own floor. The gate paid for itself on its first execution:
+`mcp-toggle` reported `distinct=1`, and the cause was a real bug — the step that
+flipped the setting sat behind an early `return` that made it unreachable, so
+that "animation" had never interpolated in any build. It caught a second one on
+`board-drag`, whose sweep range had been copied from a scene comment and lit the
+empty space below both cards; the geometry now comes from reading a captured
+frame of this scene.
+
+**Quarter speed, said out loud.** `duration-instant` is 80 ms and
+`duration-fast` 140 ms, which is two frames of fade at any frame rate a GIF can
+carry, so `clips.ps1` sets `SLINT_SLOW_ANIMATIONS` (4 by default — Slint divides
+its clock by it) and the README states that the clips play at a quarter of real
+speed. Hiding the factor would have made the clips advertise a duration the app
+does not have, which is the one thing a demo of animation should not do.
+
+**Size is a real constraint and the answer was width, not frames.** 1280×800
+Lanczos-downscaled to 320 px costs 693 KB for all four clips against the 778 KB
+the stills took, and dropping to 14 frames barely moves the number because the
+encoder merges consecutive identical frames into the previous frame's delay.
+`hover-sweep` — a pointer travelling across the block handles — was implemented,
+measured at 506 KB for one clip, and deleted rather than shipped at a size that
+would have made the README heavier than the pictures it replaced.
+
+**Unverified:** the clips are judged frame by frame by a human eye and by a hash
+count, not by a pixel-exactness gate — nothing asserts that the sidebar's easing
+*curve* is the one `Theme.slint` names, only that the frames differ. And
+`apply_motion` is a capture-only path: it drives the same properties the UI
+drives, but no test asserts a motion's staged end-state matches the scene it is
+recorded inside, so a future scene change can leave a clip pointing at a column
+that no longer has cards in it.
+

@@ -587,6 +587,41 @@ layout change is judged by diffing, not by looking:
 of changed pixels per scene, and if every box lands inside the region the change
 explains, one verdict covers the whole set.
 
+### Motion capture
+
+A still proves where a component ended up and nothing about how it got there, so
+`just clips` records the movement itself. `quire-shot --motion <name>` runs the
+same `apply_scene` staging and then, per frame, advances **Slint's own animation
+clock** by `--frame-ms` and asks the renderer for a frame: the clock is the
+platform's `duration_since_start`, which the shot binary overrides with a
+thread-local counter. Nothing is re-drawn by hand and no input is synthesised,
+so the middle frames are the app's interpolation or they do not exist — which is
+what makes the run gateable. `benchmarks/scripts/clips.ps1` hashes each frame
+and fails a motion whose distinct-frame count falls under its floor: a clip of a
+jump and a clip of a tween differ only in whether the middle moved, and before
+that check existed a `mcp-toggle` whose second step was unreachable behind its
+own guard shipped as a still.
+
+Two things about the clock are worth knowing before adding a motion:
+
+* a debug-build rasterization of 1280×800 costs more than the 220 ms it is
+  interpolating, so sampling on wall time always lands past the tween and every
+  frame comes back identical. The counter, not a sleep, is what makes an
+  interpolation observable;
+* the theme and sidebar fades are 80 and 140 ms (`Theme.slint`'s
+  `duration-instant`/`duration-fast`), i.e. two frames at any sane frame rate, so
+  `clips.ps1` sets `SLINT_SLOW_ANIMATIONS` (default 4) and the README says the
+  clips play at a quarter speed. A GIF that hid that would be advertising a
+  duration the app does not have.
+
+Motions live in `controller::apply_motion` beside the scenes in `apply_scene`,
+and a motion names only the properties it wants moved — `set_org_drop_list` and
+`set_org_drop_y` for the board's drop seam, `set_sidebar_open` for the panel.
+The geometry has to be read off a captured frame rather than computed: the first
+`board-drag` swept a y-range copied from a scene comment and lit the empty space
+below both cards, which is why the clip's frames are kept as PNGs under
+`%TEMP%\quire-clips-seq-<motion>` and looked at.
+
 ## Slint geometry traps
 
 Measured on 1.18 while chasing a table that appeared to paint over its own page
