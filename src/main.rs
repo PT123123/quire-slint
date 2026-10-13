@@ -209,7 +209,7 @@ fn show_window_closure(ui: &AppWindow) -> Box<dyn Fn() + Send> {
 ///
 /// Cosmetic when both fail, so the answer is a log line and not a dropped note.
 fn quick_note_keep_off_taskbar(window: &quire::QuickNoteWindow) {
-    if platform::hide_from_taskbar(window.window()).is_ok() {
+    if apply_quick_note_window_style(window).is_ok() {
         return;
     }
     let weak = window.as_weak();
@@ -219,8 +219,8 @@ fn quick_note_keep_off_taskbar(window: &quire::QuickNoteWindow) {
         std::time::Duration::from_millis(60),
         move || {
             if let Some(window) = weak.upgrade() {
-                if let Err(e) = platform::hide_from_taskbar(window.window()) {
-                    logging::warn(&format!("速记 taskbar: {e}"));
+                if let Err(e) = apply_quick_note_window_style(&window) {
+                    logging::warn(&format!("速记 window: {e}"));
                 }
             }
         },
@@ -809,10 +809,43 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                             let toolwindow = ex
                                 .map(|bits| bits & platform::WS_EX_TOOLWINDOW != 0)
                                 .unwrap_or(false);
+                            // `WS_EX_WINDOWEDGE` is the style bit that *used to*
+                            // describe the pale ring, and it is printed because it
+                            // is the one number a reader can compare across runs.
+                            // It is deliberately **not** the assertion: Windows 11
+                            // paints the ring from DWM, and the measured proof is
+                            // that clearing this bit leaves it set
+                            // (`style=0x40198 want=0x40098 after=0x40198`). What
+                            // the check asks is DWM itself, through
+                            // `platform::dwm_border_suppressed`.
+                            let window_edge = ex
+                                .map(|bits| bits & platform::WS_EX_WINDOWEDGE != 0)
+                                .unwrap_or(false);
+                            // `None` — an older Windows, or a window whose HWND is
+                            // not up yet — is 「cannot tell」, and is *not*
+                            // counted as a failure: the question does not apply
+                            // there, and a gate that fails on a platform it
+                            // cannot ask is a gate nobody trusts.
+                            let dwm_border = platform::dwm_border_suppressed(quick.window());
+                            let border_gone = dwm_border != Some(false);
+                            // The tri-state is printed because the rule cannot be
+                            // stricter than `!= Some(false)` on a build that will
+                            // not answer. Measured on Windows 10.0.26200: asking DWM
+                            // for `DWMWA_BORDER_COLOR` (34) returns `0x80070057`,
+                            // while the same call for the corner preference answers
+                            // `1` = `DWMWCP_DONOTROUND`. So a passing rule says
+                            // either 「DWM says no border」 or 「DWM would not say」,
+                            // and the line has to distinguish them or the green
+                            // means nothing on this machine.
+                            let dwm_answer = match dwm_border {
+                                Some(true) => "suppressed",
+                                Some(false) => "still-there",
+                                None => "unreadable",
+                            };
                             let host = g.get_quick_note_host();
                             let capture = g.get_org_capture_open();
                             eprintln!(
-                                "quick-note {door}: main-visible={} note-visible={} capture-open={} host={} area={} tick={} note-ex={} toolwindow={} note-draft={:?} ui-draft={:?}",
+                                "quick-note {door}: main-visible={} note-visible={} capture-open={} host={} area={} tick={} note-ex={} toolwindow={} windowedge={} dwm-border={} note-draft={:?} ui-draft={:?}",
                                 ui.window().is_visible(),
                                 note_visible,
                                 capture,
@@ -822,6 +855,8 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                                 ex.map(|bits| format!("0x{bits:08X}"))
                                     .unwrap_or_else(|| "-".into()),
                                 toolwindow,
+                                window_edge,
+                                dwm_answer,
                                 quick.get_draft(),
                                 g.get_org_capture_draft(),
                             );
@@ -849,6 +884,7 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                                 ("草稿的有无对得上", capture == wants_capture),
                                 ("草稿只有一个宿主", host == note_visible),
                                 ("小窗可见时不在任务栏", !note_visible || toolwindow),
+                                ("小窗边缘没有白线", !note_visible || border_gone),
                                 ("小窗里的字就是 UIState 里的字", draft_matches),
                                 // The one assertion that would have caught the
                                 // original bug on its own: the keystroke was
