@@ -135,7 +135,20 @@ fn apply_zoom(ui: &AppWindow, state: &Rc<AppState>, initial: bool) {
     if physical.width == 0 || physical.height == 0 {
         return;
     }
-    let divisor = if initial { target } else { old };
+    // A maximized window's physical rectangle belongs to the OS and does not
+    // follow the factor, so — exactly like `initial`, where the size on the
+    // window predates this session's factor — its viewport is re-derived with
+    // the *new* factor. Deriving it with the old one is the bug this closes:
+    // the item would hold physical/old while the adapter keeps `physical`, and
+    // the next window-property tick (a theme switch, an always-on-top flip —
+    // anything that dirties the properties) reads that disagreement as "the
+    // item wants another size" and asks winit to resize a *maximized* window.
+    // winit answers with `SetWindowPos` plus clearing MAXIMIZED, so the window
+    // un-maximizes itself and is dragged to physical×target/old — on a zoom-in
+    // larger than the screen. The right edge, TopBar's window buttons and the
+    // right/bottom resize borders all leave the desk, and from there the
+    // window can neither be shrunk nor re-maximized with the mouse.
+    let divisor = if initial || maximized { target } else { old };
     let max_w = avail.map_or(f32::MAX, |(w, _)| (w / target as f64) as f32);
     let max_h = avail.map_or(f32::MAX, |(_, h)| (h / target as f64) as f32);
     let vw = (physical.width as f32 / divisor)
@@ -146,8 +159,11 @@ fn apply_zoom(ui: &AppWindow, state: &Rc<AppState>, initial: bool) {
         size: LogicalSize::new(vw, vh),
     });
     if maximized {
-        // The OS owns a maximized window's size; the viewport derived above
-        // already fits it, because `target` was capped against this size.
+        // The OS owns a maximized window's size, and the viewport derived
+        // above now matches it exactly (physical ÷ target, × target back), so
+        // the property tick's size check finds nothing to fix and never asks
+        // winit to resize a maximized window. No `set_size` either — that is
+        // the call that would un-maximize it.
         return;
     }
     window.set_size(slint::PhysicalSize::new(
