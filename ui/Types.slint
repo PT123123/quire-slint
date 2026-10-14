@@ -714,6 +714,14 @@ export global UIState {
     in-out property <string> mcp-endpoint: "";
     in-out property <string> mcp-config-stdio: "";
     in-out property <string> mcp-config-http: "";
+    // 「给 Agent 的提示词」：一段说明接口能做什么、有哪些工具的文字，Rust 从
+    // tool_defs() 生成，和 MCP 服务开没开无关。
+    in-out property <string> mcp-agent-prompt: "";
+    // 复制按钮：把选中的那段文字交给 Win32 剪贴板（弹窗里的只读输入框选不动，
+    // 所以可复制的东西必须配一个按钮）。
+    callback mcp-copy(string);
+    // 立即重启：spawn `--restart` 帮手，本会话走完最终刷盘后退出，新会话接手。
+    callback mcp-restart();
     in-out property <[McpLogRow]> mcp-log;
     callback mcp-log-cleared();
     // LAN sync (crate::services::sync): the devices on this network, the last line

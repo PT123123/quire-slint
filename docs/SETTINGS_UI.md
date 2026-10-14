@@ -20,7 +20,7 @@
 
 ## 二、Tab 与搜索的显示规则
 
-- `settings-tab` 单一 index：0 外观 / 1 通用 / 2 同步 / 3 快捷键 / 4 关于。
+- `settings-tab` 单一 index：0 外观 / 1 通用 / 2 同步 / 3 MCP / 4 快捷键 / 5 关于。
   一个状态，不是五个 bool。
 - 搜索框为空：显示分段 tab 控件 + 当前 tab 的 section。
 - 搜索框非空：**tab 控件隐藏**（"tab 是地点，搜索结果列表不是"），每个 section
@@ -42,14 +42,19 @@
 - 长路径（数据文件夹）必须 `wrap: true`——elide 截掉的恰恰是辨认文件夹的尾巴。
 - `CopyableText` **不声明自己的 TouchArea**（一层盖在输入框上的 TouchArea 会把
   点击和拖选一起吃掉）。
+- **要离开本机的文字必须配「复制」按钮**（ADR-0156）：设置弹窗是 `PopupWindow`，
+  只带一个 0×0 focus-proxy，弹窗内的只读 `TextInput` 拿不到焦点就划不出选区——
+  「可选可粘」对弹窗其实不成立。MCP 页的两段配置和给 Agent 的提示词各有一个
+  `复制`，走 `platform::copy_to_clipboard`（Win32 FFI），成败都写 `db-notice`。
 
-## 四、五个 tab 的内容清单
+## 四、六个 tab 的内容清单
 
 | tab | 内容 | 归属 |
 | --- | --- | --- |
 | 外观 | 12 张主题卡（跟随系统 + `Colors.themes`，卡即预览）+ 界面缩放行（ZoomRow） | 本文件 |
-| 通用 | 三个开关（启动输入框 / Alt+N / Alt+M）+ 一条说明 + 局域网只读共享开关 + 存储块 | 本文件；存储块三按钮走 Rust |
+| 通用 | 三个开关（启动输入框 / Alt+N / Alt+M）+ 一条说明 + 局域网只读共享开关 + MCP 开关与说明 + 存储块 | 本文件；存储块三按钮走 Rust |
 | 同步 | 整节委托给 `SyncPage`（设备 / 统计 / 日志三个分段） | `SyncPage.slint`；节只负责关键词 |
+| MCP | 整节委托给 `McpPage`：开关 + 状态句 +（期望≠运行时）「立即重启」；两段客户端配置各带「复制」；「给 Agent 的提示词」+「复制」；调用日志（最近 50 条，可清空） | `McpPage.slint`；文字全部 Rust 推送，节只负责关键词 |
 | 快捷键 | `ShortcutRow` 单列表（keys 列 mono、108px 固定宽） | 本文件，纯展示 |
 | 关于 | 版本、渲染器 | 本文件；渲染器是有意不进侧栏页脚的 |
 
@@ -122,6 +127,9 @@
 | `notes.auto_input` | 通用开关 | **缺失 = 开**（`setting_flag_or(_, true)`，参考实现的默认反向读） |
 | `hotkeys.alt-n` / `hotkeys.alt-m` | 通用开关 | 缺失 = 关；main.rs 注册热键读同一行 |
 | `lan.share` | 通用开关 | 缺失 = 关（端口 5877，重启生效） |
+| `mcp.enable` | 通用开关 / MCP 页开关 | **缺失 = 开**（`setting_flag_or(_, true)`，ADR-0156）；显式关才写 "0"；改动要重启，MCP 页有「立即重启」 |
+| `mcp.port` / `mcp.token` | 手改 / 首轮开启时铸造 | 缺失 = 5880 / 缺失 = 首次开启自动生成并复用 |
+| `mcp.log` | MCP 调用留痕 | 最近 50 条 JSON；「清空日志」写 `[]` |
 | `sync.*` | 同步页 | auto / interval(≥10s) / peers / log / device-id / device-name / shadow.* |
 
 写设置走 `record_setting`（一次批量写，和主题一样），读侧的缺省值规则写在

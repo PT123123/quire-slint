@@ -214,6 +214,72 @@ pub fn tool_defs() -> Vec<ToolDef> {
     ]
 }
 
+/// 「给 Agent 的提示词」：用户贴进 AI 对话的一段话，说明 Quire 的接口能做什么、
+/// 有哪些工具、参数怎么填、守什么约定。工具清单和参数都从 tool_defs() 生成 —
+/// 接口加了新工具或改了参数，这段话不会和实际能力脱节。刻意不含令牌：这段文字
+/// 会被贴到远端助手里，连接配置（含令牌）留在页面上另一处复制。
+pub fn agent_prompt(port: u16) -> String {
+    let mut s = String::from(
+        "Quire 是运行在这台电脑上的笔记与任务应用，通过 MCP 接口开放下面这些工具。\n\
+         需要记录、整理或修改笔记与任务时，请直接调用这些工具，不要改动 Quire 的数据文件。\n\n\
+         可用工具：\n",
+    );
+    for t in tool_defs() {
+        s.push_str(&format!("- {}：{}\n", t.name, t.description));
+        // 参数行从工具自己的 input_schema 拆：必填在前，可选项带类型和枚举值。
+        let empty = serde_json::Value::Null;
+        let props = t.input_schema.get("properties").unwrap_or(&empty);
+        let required: Vec<&str> = t
+            .input_schema
+            .get("required")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let mut parts: Vec<String> = Vec::new();
+        for key in &required {
+            if let Some(p) = props.get(key) {
+                let ty = p.get("enum").map(|_| "枚举").unwrap_or_else(|| {
+                    p.get("type").and_then(Value::as_str).unwrap_or("值")
+                });
+                parts.push(format!("{key}({ty})"));
+            }
+        }
+        if let Some(obj) = props.as_object() {
+            let optional: Vec<String> = obj
+                .iter()
+                .filter(|(k, _)| !required.contains(&k.as_str()))
+                .map(|(k, p)| {
+                    let mut d = format!("{k}({})", p.get("enum").map(|_| "枚举").unwrap_or_else(|| {
+                        p.get("type").and_then(Value::as_str).unwrap_or("值")
+                    }));
+                    if let Some(ev) = p.get("enum").and_then(Value::as_array) {
+                        let vals: Vec<&str> = ev.iter().filter_map(Value::as_str).collect();
+                        d.push_str(&format!("：{}", vals.join("|")));
+                    }
+                    d
+                })
+                .collect();
+            if !optional.is_empty() {
+                parts.push(format!("可选 {}", optional.join("、")));
+            }
+        }
+        if !parts.is_empty() {
+            s.push_str(&format!("  参数：{}\n", parts.join("；")));
+        }
+    }
+    s.push_str(&format!(
+        "\n使用约定：\n\
+         - 修改或删除前，先用 list_notes / list_tasks 查到对应的 note_id / task_id。\n\
+         - trash_* 只把条目移入回收站，可用 restore_* 恢复；接口不提供彻底删除。\n\
+         - tags 用逗号分隔多个标签，支持「项目/子标签」这样的层级写法。\n\
+         - update_* 只修改给出的字段，没给出的字段保持原样。\n\
+         - HTTP 服务在 http://127.0.0.1:{port}；stdio 与 HTTP 的连接配置（含令牌）在 Quire 设置 → MCP 页复制。\n\
+         - 客户端不走 MCP 配置时，也可以按 JSON-RPC 2.0 直接调：每次 POST 一条消息，\n\
+         \x20 请求形如 {{\"method\":\"tools/call\",\"params\":{{\"name\":\"create_note\",\"arguments\":{{\"title\":\"示例\"}}}}}}。\n"
+    ));
+    s
+}
+
 // ─── 参数与执行 ──────────────────────────────────────────────────────────────
 
 fn arg_i64(args: &Value, key: &str) -> Result<i64, String> {
@@ -502,4 +568,35 @@ pub fn publish_log(g: &UIState<'_>, state: &AppState) {
         })
         .collect();
     g.set_mcp_log(Rc::new(slint::VecModel::from(rows)).into());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 提示词的价值在于它是从 tool_defs() 生成的：接口加了新工具，这段文字
+    /// 不会漏它；工具的中文描述原样进清单，Agent 读到的就是服务端答的。
+    #[test]
+    fn agent_prompt_names_every_tool_with_its_own_description() {
+        let p = agent_prompt(5880);
+        for t in tool_defs() {
+            assert!(p.contains(t.name), "提示词少了工具 {}", t.name);
+            assert!(p.contains(t.description), "提示词没带上 {} 的描述", t.name);
+        }
+        assert!(p.contains("http://127.0.0.1:5880"), "HTTP 地址要在");
+        // 参数行也从 schema 生成：必填名和枚举值都得看得见，JSON-RPC 直调的
+        // 例子要在 — 不配 MCP 的 Agent 照着它也能调。
+        assert!(p.contains("note_id(integer)"), "必填参数要带类型");
+        assert!(p.contains("none|low|medium|high"), "枚举值要展开");
+        assert!(p.contains("tools/call"), "JSON-RPC 直调例子要在");
+    }
+
+    /// 提示词会被整段贴进（可能是远端的）对话，鉴权细节不能在里面 — 「令牌」
+    /// 这个词可以出现（它只是告诉 Agent 去哪拿），Bearer 头不行，因为那意味着
+    /// 有令牌被拼进了文案。
+    #[test]
+    fn agent_prompt_carries_no_credential() {
+        let p = agent_prompt(5880);
+        assert!(!p.contains("Bearer"), "提示词不该出现鉴权头");
+    }
 }

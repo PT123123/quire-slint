@@ -219,6 +219,12 @@ export component McpPage inherits Rectangle {
                 horizontal-stretch: 1;
                 overflow: elide;
             }
+            // 期望状态和现实不一致时才给按钮：开关刚拨完（要重启才能连上）或
+            // 刚关掉（服务还挂在端口上）。一致时重启没有意义。
+            if UIState.mcp-enabled != UIState.mcp-running : McpTextButton {
+                label: "立即重启";
+                clicked => { UIState.mcp-restart(); }
+            }
             McpSwitch {
                 on: UIState.mcp-enabled;
                 toggled(v) => {
@@ -252,21 +258,66 @@ export component McpPage inherits Rectangle {
         }
         if UIState.mcp-config-stdio != "" : VerticalLayout {
             spacing: Theme.spacing-xs;
-            Text {
-                text: "stdio — 启动本机程序（推荐）";
-                font-family: Typography.ui-font;
-                font-size: Typography.size-caption;
-                color: Colors.text-secondary;
+            HorizontalLayout {
+                spacing: Theme.spacing-sm;
+                cross-axis-alignment: center;
+                Text {
+                    text: "stdio — 启动本机程序（推荐）";
+                    font-family: Typography.ui-font;
+                    font-size: Typography.size-caption;
+                    color: Colors.text-secondary;
+                    horizontal-stretch: 1;
+                }
+                McpTextButton {
+                    label: "复制";
+                    clicked => { UIState.mcp-copy(UIState.mcp-config-stdio); }
+                }
             }
             ConfigBox { body: UIState.mcp-config-stdio; }
-            Text {
-                text: "HTTP — 直连本机端口";
-                font-family: Typography.ui-font;
-                font-size: Typography.size-caption;
-                color: Colors.text-secondary;
+            HorizontalLayout {
+                spacing: Theme.spacing-sm;
+                cross-axis-alignment: center;
+                Text {
+                    text: "HTTP — 直连本机端口";
+                    font-family: Typography.ui-font;
+                    font-size: Typography.size-caption;
+                    color: Colors.text-secondary;
+                    horizontal-stretch: 1;
+                }
+                McpTextButton {
+                    label: "复制";
+                    clicked => { UIState.mcp-copy(UIState.mcp-config-http); }
+                }
             }
             ConfigBox { body: UIState.mcp-config-http; }
         }
+
+        Rectangle { height: 1px; background: Colors.border; }
+
+        // ── 给 Agent 的提示词 ──────────────────────────────────────────────
+        // The third thing this page hands out: not a config for the client's
+        // settings file but the text that goes *into the conversation*, for
+        // agents that are told about a tool rather than configured for one.
+        // Rust builds it from the server's own tool list, so the sentence and
+        // the interface cannot disagree.
+        HorizontalLayout {
+            spacing: Theme.spacing-sm;
+            cross-axis-alignment: center;
+            McpSectionLabel { label: "给 Agent 的提示词"; horizontal-stretch: 0; }
+            Rectangle { horizontal-stretch: 1; }
+            McpTextButton {
+                label: "复制";
+                clicked => { UIState.mcp-copy(UIState.mcp-agent-prompt); }
+            }
+        }
+        Text {
+            text: "客户端不读配置文件时，把这段直接贴进对话即可 — 它说明 Quire 开放了哪些工具、参数怎么用、删除只进回收站。工具清单由接口自身生成，和实际能力不会脱节。";
+            font-family: Typography.ui-font;
+            font-size: Typography.size-caption;
+            color: Colors.text-muted;
+            wrap: TextWrap.word-wrap;
+        }
+        ConfigBox { body: UIState.mcp-agent-prompt; }
 
         Rectangle { height: 1px; background: Colors.border; }
 

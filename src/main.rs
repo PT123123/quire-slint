@@ -296,6 +296,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(reason) => Err(reason.into()),
         };
     }
+    // `--restart` is not a session either. It is the in-app restart the MCP
+    // page's 立即重启 button spawns: ask the running instance to end its own
+    // session through the same channel `--quit` uses, *wait* until that
+    // session is actually gone (the pipe going silent is the signal — its
+    // final flush and database handles are released by then), and only then
+    // launch the new instance with the same arguments. Waiting is the whole
+    // safety of this path: a new session that opened the library while the
+    // old one was still flushing would be a second writer, which is exactly
+    // the rule ADR-0136 exists to keep.
+    if std::env::args().skip(1).any(|a| a == "--restart") {
+        let carry: Vec<String> =
+            std::env::args().skip(1).filter(|a| a != "--restart").collect();
+        if quire::platform::quit::request_quit().is_ok() {
+            quire::platform::quit::wait_for_session_end();
+        }
+        let exe = std::env::current_exe()?;
+        std::process::Command::new(exe)
+            .args(carry)
+            .spawn()
+            .map_err(|e| format!("quire: restart could not launch the new session: {e}"))?;
+        return Ok(());
+    }
     let start = std::time::Instant::now();
     // The UI event loop runs on its own thread with a generous stack:
     // Slint 1.18 evaluates the initial property/layout bindings of the
@@ -1045,8 +1067,10 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
         }
     }
 
-    // MCP: the AI-agent endpoint. Off unless --mcp or the settings toggle
-    // (mcp.enable) says otherwise; binds 127.0.0.1 behind a bearer token,
+    // MCP: the AI-agent endpoint. On unless the settings toggle (mcp.enable)
+    // has been explicitly turned off — an absent row reads as on, the same
+    // default-true rule a brand-new user sees; binds 127.0.0.1 behind a
+    // bearer token,
     // and every tools/call rides the job channel to the UI thread, so the
     // app stays the single writer and the window shows what an agent did.
     // The pointer file (port + token beside the library) is what the
@@ -1057,7 +1081,7 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
     // answer on too — and reuse it untouched when the toggle turns on. A
     // config that only appears once the server runs is a config the user
     // cannot paste into an agent in advance.
-    let mcp_enabled = launch.mcp || state.setting_flag("mcp.enable");
+    let mcp_enabled = launch.mcp || state.setting_flag_or("mcp.enable", true);
     let mcp_port = state
         .setting_str("mcp.port")
         .and_then(|v| v.parse().ok())
@@ -1077,6 +1101,9 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
         let g = ui.global::<quire::UIState>();
         g.set_mcp_endpoint(format!("127.0.0.1:{mcp_port}").into());
         g.set_mcp_running(false);
+        // 给 Agent 的提示词不依赖令牌：它描述的是接口本身（工具清单来自
+        // tool_defs()，两者永不漂移），关掉 MCP 时也照样可复制。
+        g.set_mcp_agent_prompt(quire::app::mcp_tools::agent_prompt(mcp_port).into());
         if !mcp_token.is_empty() {
             // stdio 走 exe 路径 + `mcp` 子命令，HTTP 直连 127.0.0.1 +
             // Bearer；serde_json 负责转义 Windows 路径里的反斜杠。

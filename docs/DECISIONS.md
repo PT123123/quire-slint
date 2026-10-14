@@ -8077,3 +8077,76 @@ drives, but no test asserts a motion's staged end-state matches the scene it is
 recorded inside, so a future scene change can leave a clip pointing at a column
 that no longer has cards in it.
 
+
+## ADR-0156 · The MCP door is open by default, restarts itself from the page, and its copyables are copyables because they have buttons
+
+**`mcp.enable` absent reads as on.** The server is loopback-only behind a minted
+Bearer token (ADR-0154), so the cost of the old default — a user who never finds the
+page and an Agent that finds a closed port — is larger than the cost of the new one:
+a port that answers on 127.0.0.1 with a token nobody can read off the wire. The first
+run mints the token and binds 5880 exactly like an explicit opt-in did; turning MCP
+off is now the written choice (`"0"`), and it reads with the same
+`setting_flag_or(_, true)` rule `notes.auto_input` uses. `--mcp` keeps forcing a
+single run on regardless of the row.
+
+**The page's 立即重启 spawns `quire.exe --restart`, which quits us through our own
+channel and waits for the pipe to go silent before starting the replacement.** The
+claim handshake (ADR-0136) already waits for a departing session, but only on the
+*different-version* path — a same-version relaunch would read `AlreadyRunning`, show
+a notice, and leave the old window exactly where it was. `--restart` is that missing
+verb: request quit, `wait_for_session_end` (the silent pipe is the proof the old
+process's handles — the library's among them — are closed), then carry this session's
+own arguments to the new instance. Never two writers on one library, and the user
+who toggles MCP and clicks 立即重启 sees a new session answering on 5880 without any
+step in between.
+
+**The configs and the prompt each carry a 复制 button; selection is a bonus, not the
+mechanism.** ADR-0135's read-only `TextInput` was the whole copy story, but the
+settings dialog is a `PopupWindow` that owns a 0×0 focus-proxy — a text input that
+cannot take focus cannot take a selection either, and the text whose entire purpose
+is to leave the app was the text the user could not select. Rule going forward:
+anything meant to be pasted elsewhere gets a button that writes the Win32 clipboard
+directly (`platform::copy_to_clipboard`, ADR-0025's write half), and the result lands
+in the bottom notice line either way.
+
+**给 Agent 的提示词 is generated from `tool_defs()`, and deliberately names no
+credential.** Three kinds of text leave this page: the stdio config, the HTTP config
+(with its token), and now the prompt — the one meant for agents that are *told* about
+a tool rather than configured for one. The prompt pastes into conversations that may
+be hosted, so it describes the ten tools and the conventions (list first for ids,
+`trash_*` is 回收站, `update_*` only touches given fields) and points at the settings
+page for connection details rather than embedding them. Generating the tool list from
+the server's own definitions is what keeps the sentence and the interface from
+disagreeing; the test asserts every tool name and description appears verbatim.
+
+## ADR-0157 · A maximized window's viewport is re-derived with the new factor, because the OS owns the rectangle — and winit un-maximizes any window it is asked to resize
+
+**The bug was one disagreement wearing three faces.** 「会自动窗口化」「窗口收不小」「最大化
+点不到」是同一个根因的三个表现: 窗口涨到比屏幕大以后, 右缘连同标题栏上的窗口按钮、右和下的
+缩放边框全在桌面外 —— 收不了, 也点不到, 看着像两个独立坏掉的按钮。病根在 `apply_zoom`
+(ADR-0095 的缩放实现): 窗口最大化时, 它的 physical 矩形归 OS 所有、不随 scale factor 变,
+但派发 `Resized` 用的除数还是**旧**因子 —— Slint 窗口项的 logical size 于是停在
+`physical/old`, 而 winit 适配器手里的 physical size 没动, 两者在新因子下差
+`physical×(target−old)/target`。
+
+**执行这个分歧的是下一次属性刷新, 不是缩放本身 —— 所以它只是「有时候」发作。** 三个条件要
+凑齐: 最大化中、因子发生变化、以及随后一次没有 resize 在飞的 `update_window_properties`
+(`pending_requested_size` 非空时那句检查被跳过, 这就是间歇性的来源)。刷新里那句「item 尺寸
+与适配器尺寸差 >1px 就 resize」(i-slint-backend-winit-1.18.0 `winitwindowadapter.rs`) 命中
+后调 `resize_window` → winit `request_inner_size` (winit-0.30.13 `window.rs`): 先
+`SetWindowPos` 改成 item 要的尺寸, 发现与当前内尺寸不同就清 `MAXIMIZED` 标志 —— 标志 diff
+落地时是 `ShowWindow(SW_RESTORE)` (`window_state.rs`)。**窗口就这么自己还原了**, 还被拉到
+`physical×target/old`: 任何一次放大都让它大于屏幕。
+
+**修法: 最大化分支的除数改成新因子, 和 `initial` 同样对待。** `physical ÷ target` 再
+`× target` 回到 physical, item 与适配器按构造成立相等, 那句 >1px 的检查永远找不到要「修」
+的分歧, winit 也再不会被请求 resize 一个最大化窗口。`set_size` 在最大化分支照旧跳过 ——
+那正是会解除最大化的那个调用。非最大化窗口的行为不变: 视口守住, 物理尺寸跟着因子走。
+
+**这条修复不负责的两件事。** ① 「最大化按钮点了没反应」还需要 item 的 `maximized` 属性
+stale-true (窗口已被还原、属性仍 true, 按钮算 `!true` 就是对已还原的窗口做 restore): 属性
+tick 的 resize 与后到的 `WM_SIZE` 之间 `window_state_event` 的同步时序是候选 race, 要
+`quire-maxtoggle` 实测收口, 本次没跑 (用户在用电脑)。② 落点显示器的工作区比 940×600 的
+最小窗还小的配置 (如 1366×768 @125%, 高 590 logical) 上, 适配器自己的最小尺寸强制执行
+(`adjust_window_size_to_satisfy_constraints`, 每次布局约束变化都跑) 照样会 resize 一个
+最大化窗口 —— 那是 Slint/winit 的上游行为, 与本次改动无关。

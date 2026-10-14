@@ -205,6 +205,15 @@ pub fn request_quit() -> Result<(), String> {
     imp::request_quit(PIPE_NAME)
 }
 
+/// Wait (bounded by [`SESSION_END_TIMEOUT`]) for the instance that accepted a
+/// quit request to actually be gone. `--restart` pauses between the two
+/// launches on exactly this signal: a pipe that no longer answers a `version`
+/// ask is a session whose handles — the database's among them — are closed,
+/// which is what keeps the replacement from being a second writer.
+pub fn wait_for_session_end() -> bool {
+    imp::wait_for_session_end(PIPE_NAME, SESSION_END_TIMEOUT)
+}
+
 #[cfg(target_os = "windows")]
 mod imp {
     use super::{BufRead, BufReader, Write};
@@ -497,6 +506,10 @@ mod imp {
 
     pub fn request_version(_pipe: &str) -> Result<String, String> {
         Err("the instance channel is Windows-only".into())
+    }
+
+    pub fn wait_for_session_end(_pipe: &str, _timeout: std::time::Duration) -> bool {
+        false
     }
 }
 

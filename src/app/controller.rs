@@ -1677,7 +1677,7 @@ pub fn bind(ui: &AppWindow, state: &Rc<AppState>) {
     g.set_app_version(env!("CARGO_PKG_VERSION").into());
     g.set_theme(state.theme_setting().into());
     g.set_lan_sharing(state.setting_flag("lan.share"));
-    g.set_mcp_enabled(state.setting_flag("mcp.enable"));
+    g.set_mcp_enabled(state.setting_flag_or("mcp.enable", true));
     g.set_sidebar_open(!state.setting_flag("sidebar.closed"));
     g.set_sidebar_width(state.sidebar_width());
     // 笔记's 启动时自动弹出输入框: absent (a library that never touched the row) is
@@ -5579,7 +5579,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
     {
         let s = state.clone();
         ui.global::<UIState>().on_toggle_mcp(move || {
-            let on = !s.setting_flag("mcp.enable");
+            let on = !s.setting_flag_or("mcp.enable", true);
             s.record_setting("mcp.enable", if on { "1" } else { "0" });
         });
     }
@@ -5593,6 +5593,62 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
             let Some(g) = gw.upgrade() else { return };
             s.mcp_log_clear();
             crate::app::mcp_tools::publish_log(&g.global::<UIState>(), &s);
+        });
+    }
+
+    {
+        // MCP 页的 复制：两段客户端配置和给 Agent 的提示词都摆在只读框里，
+        // 但弹窗内的 TextInput 拿不到焦点就选不动 — 能复制的东西要有个按钮，
+        // 不能只赌用户能划中它。文字由调用方原样带回，剪贴板走 Win32 FFI
+        // （ADR-0025 的写半：中文和转义都不经过控制台编码）。
+        let gw = ui.as_weak();
+        ui.global::<UIState>().on_mcp_copy(move |text| {
+            let Some(g) = gw.upgrade() else { return };
+            if crate::platform::copy_to_clipboard(&text) {
+                g.global::<UIState>()
+                    .set_db_notice("已复制到剪贴板，直接粘贴即可。".into());
+            } else {
+                g.global::<UIState>()
+                    .set_db_notice("复制失败 — 剪贴板被其它程序占用，请重试。".into());
+            }
+        });
+    }
+
+    {
+        // MCP 页的 立即重启：spawn `quire.exe --restart` 带上本会话自己的启动
+        // 参数（--restart 只给帮手进程解析，新会话拿到的是原参数）。帮手会请求
+        // 本实例从自己的退出通道优雅退出（最终刷盘 + clean-exit 记录照常跑），
+        // 等管道静默——也就是本进程的文件句柄真的放开了——才起新实例，所以
+        // 不会出现两个会话同开一个库。
+        let gw = ui.as_weak();
+        ui.global::<UIState>().on_mcp_restart(move || {
+            let Ok(exe) = std::env::current_exe() else {
+                return;
+            };
+            let mut cmd = std::process::Command::new(&exe);
+            cmd.arg("--restart");
+            cmd.args(std::env::args().skip(1).collect::<Vec<_>>());
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                // CREATE_NO_WINDOW：帮手要发退出请求再等旧会话散场，
+                // 中间那几秒不该闪一个黑控制台。
+                cmd.creation_flags(0x0800_0000);
+            }
+            match cmd.spawn() {
+                Ok(_) => {
+                    if let Some(g) = gw.upgrade() {
+                        g.global::<UIState>()
+                            .set_db_notice("正在重启 Quire — 当前会话保存后自动重新打开。".into());
+                    }
+                }
+                Err(e) => {
+                    if let Some(g) = gw.upgrade() {
+                        g.global::<UIState>()
+                            .set_db_notice(format!("重启没启动起来：{e}").into());
+                    }
+                }
+            }
         });
     }
 
