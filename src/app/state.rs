@@ -4935,25 +4935,7 @@ impl AppState {
                 swatch_bg: false,
                 check: false,
             },
-            MenuRow {
-                id: MENU_MOVE_UP,
-                label: "上移".into(),
-                icon: "chevron-up".into(),
-                danger: false,
-                swatch: -1,
-                swatch_bg: false,
-                check: false,
-            },
-            MenuRow {
-                id: MENU_MOVE_DOWN,
-                label: "下移".into(),
-                icon: "chevron-down".into(),
-                danger: false,
-                swatch: -1,
-                swatch_bg: false,
-                check: false,
-            },
-            MenuRow {
+MenuRow {
                 id: MENU_MOVE_TO,
                 label: "移动到".into(),
                 icon: "arrow-right".into(),

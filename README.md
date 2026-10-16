@@ -36,6 +36,31 @@ under 1% of a core. Reproduce with
 `benchmarks/scripts/bench_matrix.ps1 -Exe target\release\quire.exe`; the
 method, the caveats and every previous milestone are in `docs/PERFORMANCE.md`.
 
+## Release build cost (2026-10-17)
+
+Patch release build for **0.1.27**, Windows x64, using the existing local Cargo
+cache. The Slint run rebuilt the release application after the version bump;
+GPUI's latest README measurement is an incremental build, so build times are not
+like-for-like. Cache size is the complete repository `target/` tree, including
+the separate renderer/shot targets. The Slint cache delta uses the size measured
+immediately before and after this build. Blank cells mean the source record did
+not include that measurement.
+
+| shell | build | time | peak build memory | target cache change | EXE size |
+|-------|-------|-----:|------------------:|--------------------:|---------:|
+| Slint 0.1.27 | two confirmed release builds; final pass 9m 53s (total 14m 46s) | 14m 46s |  | +311,096,092 B (296.6 MiB); total 24,017,763,693 B (22.37 GiB) | 38,380,032 B (36.60 MiB) |
+| GPUI (latest README record, 2026-10-16) | incremental release | 55.03s |  |  | 26,343,936 B (25.12 MiB) |
+
+Slint's pre-build `target/` size was 23,706,667,601 B (22.08 GiB). An initial
+background build attempt did not yield a verifiable executable or timing record;
+it is excluded from the 14m 46s of confirmed build time, but its cache effects
+are included in the before/after `target/` size. The confirmed builds were needed
+because the first produced 0.1.27, then the requested `quire-slint` label was
+applied consistently and built again. GPUI's
+recorded EXE size and elapsed time come from `quire-gpui/README.md`; its cache
+change and peak memory for that incremental run were not recorded. Build times
+are single runs on this machine, not a benchmark series.
+
 ```
 just build                    # cargo build --release (default FemtoVG renderer)
 just run                      # cargo run (debug)

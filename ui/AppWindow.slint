@@ -524,7 +524,7 @@ export { UIState, SidebarNode, BlockRow, TextRun, CommandRow, SearchRow, MenuRow
 export { AppTray } from "TrayIcon.slint";
 
 export component AppWindow inherits Window {
-    title: "Quire";
+    title: "quire-slint-" + UIState.app-version;
     preferred-width: 1280px;
     preferred-height: 800px;
     min-width: 940px;

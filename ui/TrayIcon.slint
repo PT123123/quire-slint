@@ -17,10 +17,11 @@ export component AppTray inherits SystemTrayIcon {
     // scales it down to the notification area's own icon size. Transparent
     // background, like the exe icon — the taskbar paints its own tile behind it.
     icon: @image-url("../install/quire.png");
-    tooltip: "Quire";
+    in property <string> app-label: "quire-slint";
+    tooltip: app-label;
     // Linux/BSD use this for accessibility and overflow menus; Windows draws
     // only the icon, so it is inert there.
-    title: "Quire";
+    title: app-label;
 
     // Wired to the window in Rust (`app::tray::install`).
     callback show-window();

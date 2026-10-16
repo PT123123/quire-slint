@@ -25,6 +25,7 @@ use slint::ComponentHandle;
 /// having somewhere to hide to.
 pub fn install(ui: &AppWindow) -> Result<AppTray, slint::PlatformError> {
     let tray = AppTray::new()?;
+    tray.set_app_label(concat!("quire-slint-", env!("CARGO_PKG_VERSION")).into());
 
     // 「显示主界面」, and the icon's own left-click on platforms that report one.
     // Clearing `minimized` first is what makes this a *restore* for a window the

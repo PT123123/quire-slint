@@ -1637,10 +1637,7 @@ export component OrganizerArea inherits Rectangle {
         Rectangle {
             horizontal-stretch: 1;
             max-width: 100000px;
-            background: Colors.surface;
-            border-radius: Theme.radius-lg;
-            border-width: 1px;
-            border-color: Colors.border;
+            background: transparent;
 
             HorizontalLayout {
                 spacing: 0px;
@@ -2718,20 +2715,18 @@ export component OrganizerArea inherits Rectangle {
                         padding: 10px;
                         spacing: 1px;
 
-                        // the two tabs, and the one "+" that creates in whichever
-                        // tab is showing (a note in 笔记, a task in 任务)
+                        // This column belongs to 任务; keep its add action without
+                        // a second pair of tab controls that duplicates the sidebar.
                         HorizontalLayout {
                             height: 30px;
                             spacing: 2px;
-                            OrgButton {
-                                label: "笔记";
-                                selected: UIState.org-tab == 0;
-                                clicked => { UIState.org-open-requested(0); }
-                            }
-                            OrgButton {
-                                label: "任务";
-                                selected: UIState.org-tab == 1;
-                                clicked => { UIState.org-open-requested(1); }
+                            Text {
+                                text: "任务";
+                                font-family: Typography.ui-font;
+                                font-size: Typography.size-ui;
+                                font-weight: Typography.weight-semibold;
+                                color: Colors.text-primary;
+                                vertical-alignment: center;
                             }
                             Rectangle { horizontal-stretch: 1; }
                             // The ＋ that makes the thing this tab is about — and
@@ -2950,8 +2945,7 @@ export component OrganizerArea inherits Rectangle {
                     width: parent.width;
                     height: parent.height;
                     border-radius: Theme.radius-lg;
-                    border-width: 1px;
-                    border-color: Colors.border-strong;
+                    border-width: 0px;
                     background: Colors.surface-overlay;
                     clip: true;
 

@@ -1,5 +1,5 @@
 # Deploy a release into the workshop's archive: one folder per release,
-# C:\workshop\quire-desktop-<version>\quire-desktop-<version>.exe.
+# C:\workshop\quire-slint-<version>\quire-slint-<version>.exe.
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File install\deploy-workshop.ps1
 #
@@ -14,7 +14,7 @@
 # another `quire.exe`, and the FileVersion resource is one dialog away rather
 # than in the shell's own listing.
 #
-# The name is `quire-desktop`, not the manifest's `quire`: the workshop is where
+# The name is `quire-slint`, not the manifest's `quire`: the workshop is where
 # this drops beside *other* applications, and the two shells this repository has
 # (quire-desktop, quire-droid) are two builds of one application that ship on
 # different days. A bare `quire-<version>` would read as one application in a
@@ -124,7 +124,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 # One copy, into the folder named after the version. There is no in-place
 # install path any more (ADR-0139), so no running instance sits on a file this
 # deploy writes and nothing has to be asked to leave.
-$name = "quire-desktop-$version"
+$name = "quire-slint-$version"
 $archive = Join-Path 'C:\workshop' $name
 New-Item -ItemType Directory -Force -Path $archive | Out-Null
 # One variable feeds both, so the folder and the file inside it cannot drift into

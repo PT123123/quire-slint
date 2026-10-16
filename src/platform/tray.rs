@@ -274,7 +274,8 @@ mod imp {
                 info_flags: 0,
                 guid_item: [0; 4],
             };
-            for (slot, ch) in data.tip.iter_mut().zip("Quire".encode_utf16()) {
+            let label = concat!("quire-slint-", env!("CARGO_PKG_VERSION"));
+            for (slot, ch) in data.tip.iter_mut().zip(label.encode_utf16()) {
                 *slot = ch;
             }
             data

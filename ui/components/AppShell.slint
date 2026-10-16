@@ -52,7 +52,7 @@ export component AppShell inherits Rectangle {
         // the notice sits UNDER the title bar, not above it: an additive
         // band at the very top shrank the sidebar and clipped its last row
         // (A4 sweep, recovered scene)
-        if UIState.db-notice != "" : Rectangle {
+        if UIState.db-notice != "" && UIState.active-area != "organizer" : Rectangle {
             height: 30px;
             background: Theme.dark ? #3d3517 : #f6e7b2;
             HorizontalLayout {
