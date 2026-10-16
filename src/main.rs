@@ -1360,7 +1360,12 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
         right: x + size.width as f64,
         bottom: y + size.height as f64,
     };
-    state.record_window_geometry(state.restore_geometry().unwrap_or(live));
+    let geometry = if ui.window().is_maximized() {
+        state.restore_geometry().unwrap_or(live)
+    } else {
+        live
+    };
+    state.record_window_geometry(geometry);
     state.persistence_force_flush();
     // The clean-exit record (M8_FEEDBACK #10, ADR-0018): the next start reads
     // its absence — with no panic report — as "killed, crashed natively, or

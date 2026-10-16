@@ -1023,13 +1023,9 @@ export global UIState {
     callback window-resized();
     // 最大化 / 窗口化. The flag is mirrored for the title bar's 还原 button, and
     // the callback is for Rust, which has one job: the moment the window goes
-    // maximized is the last moment its own rectangle is knowable, because from
-    // then on `Window::size()` answers with the monitor's size. Without the
-    // snapshot a session closed while maximized saves that monitor's dimensions
-    // as the next launch's window size — which is how a maximized window on a
-    // secondary display came back sized for a display that may not be there.
+    // maximized is mirrored for the title bar; Rust queries the live window state
+    // for zoom and caches the last normal rectangle on resize.
     in-out property <bool> window-maximized: false;
-    callback window-maximized-changed(bool);
     callback move-block(int);
     // drag-reorder (grip handle): Rust packs/unpacks the payload, hovers
     // validate the landing, drops commit one MoveBlockTo command

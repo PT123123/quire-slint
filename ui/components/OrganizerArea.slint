@@ -632,12 +632,12 @@ component OrgTaskRow inherits Rectangle {
         ? Colors.accent.with-alpha(task-hover-ta.has-hover ? 0.70 : 0.55)
         : task.selected
         ? Colors.accent.with-alpha(task-hover-ta.has-hover ? 0.50 : 0.35)
-        : task-hover-ta.has-hover ? Colors.accent.with-alpha(0.28) : transparent;
+        : task-hover-ta.has-hover ? Colors.accent.with-alpha(0.32) : Colors.border;
     background: task.picked
         ? Colors.accent.with-alpha(task-hover-ta.has-hover ? 0.24 : 0.16)
         : task.selected
         ? Colors.accent.with-alpha(task-hover-ta.has-hover ? 0.16 : 0.10)
-        : task-hover-ta.has-hover ? Colors.accent.with-alpha(0.11) : transparent;
+        : task-hover-ta.has-hover ? Colors.accent.with-alpha(0.11) : Colors.surface;
     animate background { duration: Theme.duration-instant; }
     animate border-color { duration: Theme.duration-instant; }
 
@@ -654,6 +654,14 @@ component OrgTaskRow inherits Rectangle {
             : Colors.accent;
     }
 
+    // Put the row's broad selection target behind its child controls. When this
+    // was last in paint order it covered OrgCheck, so a click on the circle only
+    // opened the row and never reached the completion callback.
+    task-hover-ta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.opened(); }
+    }
+
     HorizontalLayout {
         padding-left: 12px;
         padding-right: 10px;
@@ -668,6 +676,7 @@ component OrgTaskRow inherits Rectangle {
             checked: UIState.org-selecting ? task.picked : task.done;
             box-size: 18px;
             round: !UIState.org-selecting;
+            cross-axis-self-alignment: start;
             toggled => { root.toggled(); }
         }
         VerticalLayout {
@@ -784,10 +793,6 @@ component OrgTaskRow inherits Rectangle {
             danger: true;
             clicked => { UIState.org-bin-purged(task.id); }
         }
-    }
-    task-hover-ta := TouchArea {
-        mouse-cursor: MouseCursor.pointer;
-        clicked => { root.opened(); }
     }
 }
 

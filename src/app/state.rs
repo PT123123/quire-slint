@@ -128,10 +128,9 @@ pub struct AppState {
     /// put the zoom back instead of letting a monitor change swallow it
     /// (controller::apply_zoom).
     base_scale: Cell<f32>,
-    /// The window's own rectangle as it was just before it was maximized, and
-    /// `None` the rest of the time. A maximized window reports the *monitor's*
-    /// size, so this is the only place the user's chosen size survives a session
-    /// that ends while maximized — see `record_window_geometry`.
+    /// The latest normal window rectangle observed during resize. A maximized
+    /// window reports the monitor's size, so this cached rectangle is used if
+    /// the session ends while maximized — see `record_window_geometry`.
     restore_geometry: RefCell<Option<WindowGeometry>>,
     /// UI weak handle, installed by the controller at wire time — lets the
     /// state push display-only projections (page stats) without a callback.
@@ -2108,11 +2107,10 @@ impl AppState {
         );
     }
 
-    /// The rectangle a maximized window will return to, snapshotted when the
-    /// window went maximized (`controller::bind`'s
-    /// `on_window_maximized_changed`). Session state, not a setting: it is
-    /// meaningless after a restart, and `main.rs` reads it at exit only to
-    /// decide what to write.
+    /// The latest normal rectangle, refreshed on normal window resize rather
+    /// than on maximize notification (which can already expose monitor bounds).
+    /// Session state: `main.rs` uses it at exit only while the live window is
+    /// maximized.
     pub fn set_restore_geometry(&self, g: Option<WindowGeometry>) {
         self.restore_geometry.replace(g);
     }
@@ -8740,6 +8738,17 @@ impl AppState {
             t.done = done;
             t.completed_at = done.then_some(now);
         })
+    }
+
+    /// Toggle the task that was actually clicked. The selected detail pane can
+    /// point at another task, so its `done` value is not a safe toggle source.
+    pub fn org_task_toggle_done(&self, id: i64) -> Option<Vec<Change>> {
+        let task = self
+            .organizer
+            .borrow()
+            .task(TaskId(id.max(0) as u64))?
+            .clone();
+        self.org_task_done(id, !task.done)
     }
 
     pub fn org_task_priority(&self, id: i64, slot: i32) -> Option<Vec<Change>> {

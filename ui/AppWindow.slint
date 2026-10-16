@@ -548,11 +548,9 @@ export component AppWindow inherits Window {
     // needs it because the size a maximized window reports is the *monitor's*
     // size, and recording that is how a maximized session used to come back
     // as a full-screen window on the next launch: the flag is the only moment
-    // at which the pre-maximize rectangle is still knowable (see
-    // `window_maximized_changed` in `controller::wire`).
+    // at which the title bar can read the state and draw the right action.
     changed maximized => {
         UIState.window-maximized = self.maximized;
-        UIState.window-maximized-changed(self.maximized);
     }
 
     // `changed` handlers can only observe locally declared properties, so the

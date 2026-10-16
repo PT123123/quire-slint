@@ -97,7 +97,10 @@ fn apply_zoom(ui: &AppWindow, state: &Rc<AppState>, initial: bool) {
     // maximized window's size is the OS's, not ours, so the space it already
     // fills is the bound; otherwise it is the containing monitor's work area.
     // No monitor (headless, non-Windows): no cap.
-    let maximized = ui.global::<UIState>().get_window_maximized();
+    // The UIState mirror can trail the native maximize event by one dispatch.
+    // A DPI/scale callback in that gap used to take the normal-window path and
+    // call set_size(), which clears the maximized state on Windows.
+    let maximized = window.is_maximized();
     let avail: Option<(f64, f64)> = if maximized {
         Some((physical.width as f64, physical.height as f64))
             .filter(|(w, h)| *w > 0.0 && *h > 0.0)
@@ -1784,6 +1787,24 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
     let gw = ui_state_weak(ui);
     state.set_ui(gw.clone());
 
+    // `bind` runs before `wire` and may already have applied the saved size or
+    // zoom. Seed the restore rectangle now, before the first native resize or
+    // maximize notification can replace the window size with monitor bounds.
+    let window = ui.window();
+    if !window.is_maximized() {
+        let position = window.position();
+        let size = window.size();
+        if size.width > 0 && size.height > 0 {
+            let (x, y) = (position.x as f64, position.y as f64);
+            state.set_restore_geometry(Some(Rect {
+                left: x,
+                top: y,
+                right: x + size.width as f64,
+                bottom: y + size.height as f64,
+            }));
+        }
+    }
+
     // The one clock a deferred delete runs on (ADR-0108). Leaked like every other
     // timer here, and declared at the top of `wire` rather than next to the area's
     // other handlers because *four* places arm it — the two delete buttons, the ⋯
@@ -1899,7 +1920,24 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
         let s = state.clone();
         ui.global::<UIState>().on_window_resized(move || {
             let Some(ui) = ui_w.upgrade() else { return };
-            let actual = ui.window().scale_factor();
+            let window = ui.window();
+            // Cache the latest normal rectangle while the OS still owns it.
+            // The maximize notification arrives after Windows has already
+            // replaced `size()` with the monitor bounds.
+            if !window.is_maximized() {
+                let position = window.position();
+                let size = window.size();
+                if size.width > 0 && size.height > 0 {
+                    let (x, y) = (position.x as f64, position.y as f64);
+                    s.set_restore_geometry(Some(Rect {
+                        left: x,
+                        top: y,
+                        right: x + size.width as f64,
+                        bottom: y + size.height as f64,
+                    }));
+                }
+            }
+            let actual = window.scale_factor();
             let expected = s.base_scale() * s.zoom();
             if (actual - expected).abs() < 0.001 {
                 // an ordinary resize: the number on the window is ours
@@ -1921,34 +1959,6 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
                     apply_zoom(&ui, &s, false);
                 }
             });
-        });
-    }
-
-    {
-        // 最大化 / 窗口化: remember the window's own rectangle, because from the
-        // moment it is maximized `Window::size()` answers with the *monitor's*
-        // size and the rectangle the user chose is not recoverable. `main.rs`
-        // reads this at exit instead of the maximized rectangle — without it a
-        // session that ended maximized saved a screen's dimensions as the next
-        // launch's window, which is the whole of the multi-monitor bug.
-        let ui_w = ui.as_weak();
-        let s = state.clone();
-        ui.global::<UIState>().on_window_maximized_changed(move |maximized| {
-            let Some(ui) = ui_w.upgrade() else { return };
-            if maximized {
-                let window = ui.window();
-                let position = window.position();
-                let size = window.size();
-                let (x, y) = (position.x as f64, position.y as f64);
-                s.set_restore_geometry(Some(Rect {
-                    left: x,
-                    top: y,
-                    right: x + size.width as f64,
-                    bottom: y + size.height as f64,
-                }));
-            } else {
-                s.set_restore_geometry(None);
-            }
         });
     }
 
@@ -6165,8 +6175,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
                 org_refresh(&g, &s);
                 return;
             }
-            let done = !g.get_org_task_detail().done;
-            s.org_task_done(id as i64, done);
+            s.org_task_toggle_done(id as i64);
             org_refresh(&g, &s);
         });
     }
