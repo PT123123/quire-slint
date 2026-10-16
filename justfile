@@ -4,9 +4,13 @@ set shell := ["powershell.exe", "-NoProfile", "-Command"]
 default:
     @just --list
 
-# release build (default FemtoVG renderer)
+# daily build: dev profile, incremental, only the application binary
 build:
-    cargo build --release
+    cargo build --bin quire
+
+# release build (default FemtoVG renderer; use for packaging and deployment)
+release-build:
+    cargo build --release --bin quire
 
 # run in debug; pass cargo flags as one quoted string
 # e.g. just run "--no-default-features --features skia"
@@ -63,7 +67,7 @@ clips:
 
 # package the release exe into a zip (M8-lite; installer comes later)
 dist:
-    cargo build --release
+    cargo build --release --bin quire
     powershell -NoProfile -ExecutionPolicy Bypass -File benchmarks\scripts\dist.ps1
 
 # deploy a release into the workshop's archive: one folder per release,

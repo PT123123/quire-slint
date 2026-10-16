@@ -27,8 +27,8 @@
 #      and the installer's own file name and AppVersion are read from that
 #      resource — so a publish that built before the bump would publish the
 #      previous version under a new tag.
-#   2. `cargo build --release`, and then the exe is asked to confirm it took the
-#      bump. A stale exe reports the previous version here; `NotAttempted` (no
+#   2. `cargo build --release --bin quire`, then ask the exe to confirm it took
+#      the bump. A stale exe reports the previous version here; `NotAttempted` (no
 #      rc.exe on this machine) leaves the block empty, and an empty value is a
 #      soft miss rather than a failed publish, the way build.rs treats it.
 #   3. The two assets. The installer first, because it is the one that can fail
@@ -91,7 +91,7 @@ Write-Output "==> version -> $version"
 # ships. This is the slow step (~2m30s), and it is one crate: the bump
 # invalidated `quire` itself, which is where codegen-units = 1 + thin LTO spends
 # its time (ADR-0024's update, PERFORMANCE.md "Build cost").
-cargo build --release
+cargo build --release --bin quire
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $exe = Join-Path $root 'target\release\quire.exe'

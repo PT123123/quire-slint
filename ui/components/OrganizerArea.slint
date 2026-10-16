@@ -2077,7 +2077,10 @@ export component OrganizerArea inherits Rectangle {
                                     ? Colors.accent.with-alpha(0.60)
                                     : Colors.border;
                                 background: row.selected || row.picked
-                                    ? Colors.surface-selected
+                                    // Selection marks which note owns the detail
+                                    // pane; keep the accent wash subtle so body text
+                                    // remains easy to read on the card itself.
+                                    ? Colors.p.bg-elev2.mix(Colors.p.accent, 0.07)
                                     : Colors.surface-hover;
                                 animate border-color { duration: Theme.duration-instant; }
 

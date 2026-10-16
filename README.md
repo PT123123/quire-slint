@@ -58,8 +58,40 @@ program. The measurements are single runs on this machine, not a benchmark
 series. Full build JSON and logs are in `%TEMP%` as
 `quire-slint-build-20261017-final.json` and matching `.stdout.log` / `.stderr.log`.
 
+## Daily build cost (2026-10-17)
+
+The daily command is `cargo build --bin quire` (the `dev` profile, incremental,
+one application binary). This sample followed a `.slint` style change, so Cargo
+reused the existing dependency cache but rebuilt the `quire` crate, including
+its generated UI code. It is an incremental project build, not a no-change hot
+build or a clean build.
+
+| build | time | peak build memory | `target/debug` change | EXE size |
+|-------|-----:|------------------:|---------------------:|---------:|
+| Slint daily, UI change | 199.29s (3m 19s) | Working Set 5,854.5 MiB (5.72 GiB); Private 6,362.4 MiB (6.21 GiB) | +2,082,961,803 B; total 23,054,012,712 B (21.47 GiB) | 82,958,848 B (79.07 MiB) |
+
+The existing `target/debug` tree was 20,971,050,909 B before this build. The
+comparison with the Release cold build above shows why daily and release results
+must stay separate: this edit took 3m19s with cached dependencies, while the
+Release row rebuilt into an empty target and took 12m21s. This single daily
+sample is a baseline; the next no-change or Rust-only build can show the warm
+incremental cost.
+
+### Where a crate split may help
+
+The data layer is already separate: `quire-core` is its own pinned dependency.
+The Slint generated code and the desktop shell still share the `quire` crate:
+`slint::include_modules!()` in `src/lib.rs` expands the UI into that crate. A
+dedicated UI crate could keep that generated code fresh when only controller or
+platform Rust changes, which is the most plausible build-time win. A `.slint`
+change would still rebuild the generated UI crate and likely the shell crate
+that consumes its API, so that split may not shorten UI iteration. Measure those
+two edit paths before moving the boundary; the detailed constraints are in
+`docs/BUILD_PERFORMANCE.md`.
+
 ```
-just build                    # cargo build --release (default FemtoVG renderer)
+just build                    # daily incremental dev build, app binary only
+just release-build            # release build, app binary only
 just run                      # cargo run (debug)
 just check                    # local CI replacement: check + test + release
 just shot menu                # headless visual shot (scene name optional)
