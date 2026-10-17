@@ -104,6 +104,9 @@ component OrgDetailRow inherits HorizontalLayout {
 component OrgNavRow inherits Rectangle {
     in property <string> label;
     in property <int> count: -1;        // < 0 paints no count
+    in property <length> row-height: 32px;
+    in property <length> label-size: Typography.size-ui;
+    in property <length> count-size: Typography.size-caption;
     in property <int> color-slot: -1;   // >= 0 draws the list's dot
     in property <bool> selected: false;
     in property <bool> accent: false;
@@ -121,7 +124,7 @@ component OrgNavRow inherits Rectangle {
     callback rename-committed(string);
     callback rename-cancelled();
 
-    height: 32px;
+    height: root.row-height;
     border-radius: Theme.radius-sm;
 
     // What the text must leave room for: the count, then the exclude control, then
@@ -140,7 +143,7 @@ component OrgNavRow inherits Rectangle {
     // and the label in the primary colour: three cues, none of them a saturated
     // plate. The bar is also what tells a long label where it starts.
     background: selected
-        ? Colors.surface-overlay
+        ? (UIState.org-tab == 0 ? Colors.surface-selected : Colors.surface-overlay)
         : (ta.has-hover ? Colors.hover-fill : transparent);
     animate background { duration: Theme.duration-instant; }
 
@@ -170,7 +173,7 @@ component OrgNavRow inherits Rectangle {
         visible: !root.renaming;
         text: root.label;
         font-family: Typography.ui-font;
-        font-size: Typography.size-ui;
+        font-size: root.label-size;
         font-weight: root.selected ? Typography.weight-semibold : Typography.weight-regular;
         color: root.excluded ? Colors.text-muted
             : (root.accent ? Colors.accent-text
@@ -187,7 +190,7 @@ component OrgNavRow inherits Rectangle {
         visible: root.count > 0 && !root.renaming;
         text: root.count;
         font-family: Typography.ui-font;
-        font-size: Typography.size-caption;
+        font-size: root.count-size;
         color: Colors.text-muted;
         vertical-alignment: center;
         horizontal-alignment: right;
@@ -302,7 +305,7 @@ component OrgTagColumn inherits VerticalLayout {
     // The path being filtered, as a breadcrumb, and — under it — the paths being
     // *hidden*. Wrapped in a plate because a width inside the layout would be a
     // binding loop, and an elided path needs one.
-    Rectangle {
+    if UIState.org-tag != "" || UIState.org-tab != 0 : Rectangle {
         height: 22px;
         Text {
             x: 13px;
@@ -339,13 +342,16 @@ component OrgTagColumn inherits VerticalLayout {
         clicked => { UIState.org-filters-cleared(); }
     }
     for tag[i] in UIState.org-tag-rows : OrgNavRow {
-        label: tag.name;
+        label: UIState.org-tab == 0 ? "#" + tag.name : tag.name;
         count: tag.count;
+        row-height: UIState.org-tab == 0 ? 44px : 32px;
+        label-size: UIState.org-tab == 0 ? 18px : Typography.size-ui;
+        count-size: UIState.org-tab == 0 ? 16px : Typography.size-caption;
         excludable: true;
         excluded: tag.excluded;
         // A chip shows the level *below* the filter, so it is never the selected
         // one — the row above it says where the filter is.
-        selected: false;
+        selected: UIState.org-tag == tag.path;
         clicked => { UIState.org-tag-picked(tag.path); }
         exclude-toggled => { UIState.org-tag-excluded(tag.path); }
     }
@@ -1610,7 +1616,7 @@ export component OrganizerArea inherits Rectangle {
                         // rows with a border drawn round them.
                         padding-left: 20px;
                         padding-right: 20px;
-                        padding-top: 16px;
+                        padding-top: UIState.org-tab == 0 && UIState.org-note-detail.id < 0 ? 88px : 16px;
                         padding-bottom: 16px;
                         spacing: 10px;
 
@@ -1619,7 +1625,7 @@ export component OrganizerArea inherits Rectangle {
                         // SPEC §四十一 / ADR-0111 replaces this row entirely — the
                         // view's title and its counts are not the question being
                         // asked any more.
-                        if !UIState.org-selecting : VerticalLayout {
+                        if !UIState.org-selecting && UIState.org-tab != 0 : VerticalLayout {
                             spacing: 12px;
                             HorizontalLayout {
                                 height: 32px; spacing: 8px;
@@ -1655,7 +1661,7 @@ export component OrganizerArea inherits Rectangle {
                             }
                         }
 
-                        if !UIState.org-selecting : HorizontalLayout {
+                        if !UIState.org-selecting && UIState.org-tab != 0 : HorizontalLayout {
                             height: 30px;
                             spacing: 6px;
                             if UIState.org-bin-open : OrgButton { label: "清空回收站"; danger: true; font-size: Typography.size-caption; clicked => { UIState.org-bin-emptied(); } }
@@ -1732,7 +1738,7 @@ export component OrganizerArea inherits Rectangle {
                         // its own rather than a third header line, so the title row
                         // stays the same shape on both halves.
                         Rectangle { height: 1px; background: Colors.border; }
-                        if UIState.org-tab == 0 && !UIState.org-selecting : VerticalLayout {
+                        if UIState.org-tab == 0 && UIState.org-note-detail.id >= 0 && !UIState.org-selecting : VerticalLayout {
                             height: 76px;
                             spacing: 8px;
                             if !UIState.org-note-search-open : IconButton {
@@ -2028,7 +2034,7 @@ export component OrganizerArea inherits Rectangle {
                                             // this app stores UTC and has no zone.
                                             text: row.when;
                                             font-family: Typography.ui-font;
-                                            font-size: Typography.size-caption;
+                                            font-size: UIState.org-tab == 0 ? 14px : Typography.size-caption;
                                             color: Colors.text-muted;
                                             vertical-alignment: center;
                                             overflow: elide;
@@ -2064,7 +2070,7 @@ export component OrganizerArea inherits Rectangle {
                                         height: min(self.preferred-height, 112px);
                                         text: row.title != "" ? row.title + (row.body != "" ? "\n" + row.body : "") : row.body;
                                         font-family: Typography.ui-font;
-                                        font-size: 14px;
+                                        font-size: 18px;
                                         color: Colors.text-primary;
                                         wrap: word-wrap;
                                         overflow: elide;
@@ -2873,9 +2879,9 @@ export component OrganizerArea inherits Rectangle {
                 // list or a selected note is showing. It follows the editor in
                 // this layout so opening a note never moves the navigator left.
                 if UIState.org-tab == 0 : Rectangle {
-                    preferred-width: 220px;
-                    min-width: 190px;
-                    max-width: 260px;
+                    preferred-width: 300px;
+                    min-width: 220px;
+                    max-width: 360px;
                     vertical-stretch: 1;
                     max-height: 100000px;
                     background: Colors.surface;
@@ -2884,9 +2890,12 @@ export component OrganizerArea inherits Rectangle {
                     clip: true;
                     ScrollView {
                         VerticalLayout {
-                            padding: 14px;
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            padding-top: UIState.org-note-detail.id < 0 ? 84px : 14px;
+                            padding-bottom: 14px;
                             spacing: 6px;
-                            Text {
+                            if UIState.org-note-detail.id >= 0 : Text {
                                 text: "标签";
                                 height: 22px;
                                 font-family: Typography.ui-font;
@@ -2913,6 +2922,118 @@ export component OrganizerArea inherits Rectangle {
         }
     }
 
+
+    // Notes toolbar floats over the top of the list and tag rail; the list's
+    // reserved top padding keeps its first card clear of these controls.
+    if UIState.org-tab == 0 && UIState.org-note-detail.id < 0 && !UIState.org-selecting : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: 72px;
+        background: Colors.background;
+        HorizontalLayout {
+            padding-left: 20px;
+            padding-right: 20px;
+            spacing: 12px;
+            cross-axis-alignment: center;
+
+            OrgInput {
+                grow: false;
+                field-width: 360px;
+                hint-height: 40px;
+                font-size: 16px;
+                placeholder: "搜索…";
+                value <=> UIState.org-query;
+                edited => { UIState.org-query-changed(); }
+            }
+            Rectangle {
+                width: 40px;
+                height: 40px;
+                border-radius: Theme.radius-sm;
+                background: menu-ta.has-hover ? Colors.hover-fill : transparent;
+                Rectangle { x: 11px; y: 12px; width: 18px; height: 2px; background: Colors.text-secondary; }
+                Rectangle { x: 11px; y: 19px; width: 18px; height: 2px; background: Colors.text-secondary; }
+                Rectangle { x: 11px; y: 26px; width: 18px; height: 2px; background: Colors.text-secondary; }
+                menu-ta := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => { UIState.toggle-sidebar(); }
+                }
+            }
+            OrgSortBox {
+                width: 190px;
+                height: 40px;
+                labels: root.note-sort-names;
+                selected: UIState.org-note-sort;
+                open: UIState.org-note-sort-open;
+                report-position(x, y) => {
+                    root.note-sort-x = x - root.absolute-position.x;
+                    root.note-sort-y = y - root.absolute-position.y + 30px + 4px;
+                }
+                opened => { UIState.org-note-sort-open = true; }
+                picked(slot) => {
+                    UIState.org-note-sort-open = false;
+                    UIState.org-note-sort-picked(slot);
+                }
+                closed => { UIState.org-note-sort-open = false; }
+            }
+            OrgButton {
+                label: "选择";
+                height: 40px;
+                font-size: 16px;
+                clicked => { UIState.org-select-entered(0); }
+            }
+            OrgButton {
+                label: "指令…";
+                height: 40px;
+                font-size: 16px;
+                clicked => { UIState.org-command-opened(0); }
+            }
+            OrgButton {
+                label: "复制全部";
+                height: 40px;
+                font-size: 16px;
+                clicked => { UIState.org-notes-copy-all(); }
+            }
+            IconButton {
+                icon-name: "refresh";
+                size: 40px;
+                icon-color: Colors.text-muted;
+                hover-color: Colors.accent-text;
+                clicked => { UIState.sync-now-all(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Rectangle {
+                width: 300px;
+                height: 40px;
+                HorizontalLayout {
+                    padding-left: 14px;
+                    spacing: 8px;
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: UIState.sync-has-peers ? Colors.success : Colors.text-muted;
+                    }
+                    Text {
+                        text: UIState.sync-has-peers ? "已配置同步" : "未配置同步";
+                        font-family: Typography.ui-font;
+                        font-size: Typography.size-ui;
+                        color: UIState.sync-has-peers ? Colors.accent-text : Colors.text-muted;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text {
+                        text: "标签";
+                        font-family: Typography.ui-font;
+                        font-size: Typography.size-ui-lg;
+                        font-weight: Typography.weight-semibold;
+                        color: Colors.text-muted;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
 
     // Centered note composer for the list state. It is a page-level overlay so
     // the ＋ works even when no note is selected; placing it in the note detail
