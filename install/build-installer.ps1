@@ -10,12 +10,12 @@ $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
 if (-not $SkipBuild) {
-    Write-Output "cargo build --release --bin quire"
-    cargo build --release --bin quire
+    Write-Output "cargo build --release --bin quire-slint"
+    cargo build --release --bin quire-slint
     if ($LASTEXITCODE -ne 0) { throw "release build failed" }
 }
 
-$exe = "target\release\quire.exe"
+$exe = "target\release\quire-slint.exe"
 if (-not (Test-Path $exe)) { throw "$exe is missing; run without -SkipBuild" }
 
 # ISCC is the Inno Setup command-line compiler. winget install JRSoftware.InnoSetup

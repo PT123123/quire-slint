@@ -867,8 +867,8 @@ impl AppState {
         // metadata table (one transaction), then consume them from the
         // session file — session.meta is a handoff note to exactly this
         // next session, so anything left would be re-reported forever. An
-        // abort summary also becomes the startup notice bar's first line.
-        let mut abort_notice: Option<String> = None;
+        // Recovery details remain recorded in metadata; they do not need to
+        // interrupt the next session with a startup notice bar.
         if let (Some(r), Some(logger)) = (&repo, crate::services::logging::current()) {
             let entries = logger.meta_entries();
             if !entries.is_empty() {
@@ -883,14 +883,6 @@ impl AppState {
                     key: k.clone(),
                 }));
                 let _ = r.apply(&changes);
-                if let Some((_, summary)) = entries.iter().find(|(k, _)| {
-                    k == crate::services::logging::KEY_SESSION_ABORTED
-                }) {
-                    let first_line = summary.lines().next().unwrap_or(summary);
-                    abort_notice = Some(format!(
-                        "上次会话意外结束：{first_line}"
-                    ));
-                }
             }
         }
 
@@ -1077,9 +1069,8 @@ impl AppState {
             recents_open: Cell::new(false),
             ui: RefCell::new(None),
             db_notice: RefCell::new(
-                abort_notice
+                attachment_notice
                     .into_iter()
-                    .chain(attachment_notice)
                     .chain(db_notice_read)
                     .chain(org_notice_read)
                     .collect(),
@@ -7627,6 +7618,13 @@ impl AppState {
                 &excluded,
             )
         };
+        if let Some(g) = &ui {
+            if g.get_org_note_descending() {
+                notes.reverse();
+                notes.sort_by_key(|note| !note.pinned);
+            }
+            if g.get_org_task_descending() { tasks.reverse(); }
+        }
         // The header is the *tab's* header: the notes count notes, and a board
         // counts lists — one line reading "2 项待办" over a list of notes would
         // be the window describing something it is not showing. It comes *after*
@@ -7639,11 +7637,7 @@ impl AppState {
                 format!("{} 项", if tab == 0 { notes.len() } else { tasks.len() }),
             )
         } else if tab == 0 {
-            let title = if tag.is_empty() {
-                "全部笔记".to_string()
-            } else {
-                tag_breadcrumb(&tag)
-            };
+            let title = if tag.is_empty() { "笔记".to_string() } else { tag_breadcrumb(&tag) };
             (title, format!("{} 条笔记", notes.len()))
         } else if mode == 1 {
             let columns = self.org_board_rows(&query, sort, &dates);
@@ -8740,6 +8734,13 @@ impl AppState {
         })
     }
 
+    pub fn org_task_done_value(&self, id: i64) -> Option<bool> {
+        self.organizer
+            .borrow()
+            .task(TaskId(id.max(0) as u64))
+            .map(|task| task.done)
+    }
+
     /// Toggle the task that was actually clicked. The selected detail pane can
     /// point at another task, so its `done` value is not a safe toggle source.
     pub fn org_task_toggle_done(&self, id: i64) -> Option<Vec<Change>> {
@@ -9342,13 +9343,17 @@ impl AppState {
             return String::new();
         }
         let excluded = self.org_excluded();
-        let rows = self.org_notes(
+        let mut rows = self.org_notes(
             &g.get_org_query().to_string(),
             &g.get_org_tag().to_string(),
             &excluded,
             -1,
             g.get_org_note_sort(),
         );
+        if g.get_org_note_descending() {
+            rows.reverse();
+            rows.sort_by_key(|note| !note.pinned);
+        }
         let ids: Vec<i64> = rows.iter().map(|row| row.id as i64).collect();
         self.org_note_copy_text(&ids)
     }
@@ -17031,13 +17036,11 @@ fn note_tag_tokens(text: &str) -> Vec<String> {
 /// input means, so the row a typed string produces and the string it renders
 /// back cannot disagree.
 ///
-/// The separators are the ones a Chinese or English keyboard produces for "a
-/// list of things" — the two commas and the enumeration mark. **Not** a space: a
-/// tag is allowed to have one ("project atlas"), and splitting on spaces would
-/// file it as two tags nobody can find again.
+/// Space is the primary separator used by the organizer's tag fields. Commas
+/// remain accepted for older muscle memory and pasted values.
 fn parse_tags(input: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for tag in input.split([',', '，', '、', '\n', '\t']) {
+    for tag in input.split([' ', '\n', '\t', ',', '，', '、']) {
         let tag = tag.trim();
         if tag.is_empty() || out.iter().any(|t| t == tag) {
             continue;
@@ -17050,7 +17053,7 @@ fn parse_tags(input: &str) -> Vec<String> {
 /// The same list as its editable form — `parse_tags`'s inverse for the input's
 /// initial value.
 fn tags_text(tags: &[String]) -> String {
-    tags.join(", ")
+    tags.join(" ")
 }
 
 // ─── a tag is a path ────────────────────────────────────────────────────────

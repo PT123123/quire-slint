@@ -192,6 +192,7 @@ fn show_window_closure(ui: &AppWindow) -> Box<dyn Fn() + Send> {
             if let Some(ui) = ui_w.upgrade() {
                 ui.window().set_minimized(false);
                 let _ = ui.show();
+                let _ = quire::platform::activate_window(ui.window());
             }
         });
     })
@@ -1074,7 +1075,7 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
     // and every tools/call rides the job channel to the UI thread, so the
     // app stays the single writer and the window shows what an agent did.
     // The pointer file (port + token beside the library) is what the
-    // `quire.exe mcp` stdio bridge reads.
+    // `quire-slint.exe mcp` stdio bridge reads.
     //
     // The address and the two client configs resolve whether or not the
     // server starts: the MCP page has to show what a *disabled* server would

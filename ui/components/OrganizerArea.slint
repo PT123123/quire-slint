@@ -355,80 +355,7 @@ component OrgTagColumn inherits VerticalLayout {
 // row with a left selection bar and a ⋯ — right for a nav column, wrong for a row
 // of chips over a list that owns its card. This is that row's chip-sized twin: a
 // label, the count it would leave, and the same ⊖ for 反向筛选.
-component OrgFilterChip inherits Rectangle {
-    in property <string> label;
-    in property <bool> selected: false;
-    in property <bool> accent: false;
-    in property <bool> excluded: false;
-    // A tag chip carries the filter's other half; 全部笔记 / 回收站 / 清除筛选 do not.
-    in property <bool> excludable: false;
-    callback clicked();
-    callback exclude-toggled();
 
-    height: 24px;
-    max-width: 100000px;
-    border-radius: 12px;
-    border-width: 1px;
-    // **A selected chip is a state, not an emphasis.** It used to be a blue
-    // plate with a saturated blue border and blue text on that plate — three
-    // signals at once, for the one thing the user already knows, because 全部笔记
-    // is lit by default. Selected is now the surface one step up from the page,
-    // with the border that already separates every unselected chip, and the label
-    // in the text colour rather than the accent's. The accent keeps its job:
-    // things that want attention now (a round in flight) rather than a filter
-    // that is simply on.
-    border-color: root.excluded
-        ? Colors.danger
-        : root.selected || root.accent ? Colors.border-strong : Colors.border;
-    background: root.excluded
-        ? Colors.danger.with-alpha(0.12)
-        : root.selected || root.accent
-        ? Colors.surface-hover
-        : (ta.has-hover ? Colors.hover-fill : Colors.background);
-    animate background { duration: Theme.duration-instant; }
-
-    HorizontalLayout {
-        padding-left: 10px;
-        padding-right: root.excludable ? 4px : 10px;
-        spacing: 4px;
-        Text {
-            text: root.label;
-            font-family: Typography.ui-font;
-            font-size: Typography.size-caption;
-            color: root.excluded ? Colors.danger
-                : root.selected || root.accent ? Colors.text-primary
-                : Colors.text-secondary;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-        // The ⊖, the same shape and the same job as `OrgNavRow`'s: this build's
-        // Slint has no `rotation-angle`, so a slashed circle is a minus in a ring.
-        if root.excludable : Rectangle {
-            width: 16px;
-            height: 16px;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: root.excluded ? Colors.danger : Colors.border-strong;
-            background: root.excluded ? Colors.danger.with-alpha(0.12)
-                : (excl-ta.has-hover ? Colors.hover-fill : transparent);
-            Rectangle {
-                x: (parent.width - 8px) / 2;
-                y: (parent.height - 1.5px) / 2;
-                width: 8px;
-                height: 1.5px;
-                background: root.excluded ? Colors.danger : Colors.text-muted;
-            }
-            excl-ta := TouchArea {
-                mouse-cursor: MouseCursor.pointer;
-                clicked => { root.exclude-toggled(); }
-            }
-        }
-    }
-    ta := TouchArea {
-        mouse-cursor: MouseCursor.pointer;
-        clicked => { root.clicked(); }
-    }
-}
 
 // The toolbar's segmented control (列表 / 平铺). Two states, one box: the lit half
 // is the answer, and the box itself is what says the two are alternatives.
@@ -478,6 +405,9 @@ component OrgSeg inherits Rectangle {
 // shape — a circle, the way activitywatch's task page draws it.
 component OrgCheck inherits Rectangle {
     in property <bool> checked: false;
+    in property <int> priority: 0;
+    private property <color> mark: priority == 3 ? Colors.danger
+        : priority == 2 ? Colors.accent : priority == 1 ? Colors.success : Colors.accent;
     in property <length> box-size: 16px;
     in property <bool> round: false;
     callback toggled();
@@ -485,9 +415,9 @@ component OrgCheck inherits Rectangle {
     width: box-size;
     height: box-size;
     border-radius: round ? box-size / 2 : 4px;
-    background: checked ? Colors.accent : transparent;
+    background: checked ? root.mark : transparent;
     border-width: 1.5px;
-    border-color: checked ? Colors.accent : Colors.border-strong;
+    border-color: checked || root.priority > 0 ? root.mark : Colors.border-strong;
 
     if checked : Icon {
         x: (parent.width - self.width) / 2;
@@ -625,34 +555,16 @@ component OrgTaskRow inherits Rectangle {
     callback opened();
     callback menu-requested(length, length);
 
-    height: 52px;
+    private property <bool> has-metadata: task.due-label != "" || task.repeat > 0
+        || task.tag-list.length > 0 || task.list > 0 || task.subtasks-total > 0;
+    height: root.has-metadata ? 78px : 58px;
     border-radius: Theme.radius-md;
     border-width: 1px;
-    border-color: task.picked
-        ? Colors.accent.with-alpha(task-hover-ta.has-hover ? 0.70 : 0.55)
-        : task.selected
-        ? Colors.accent.with-alpha(task-hover-ta.has-hover ? 0.50 : 0.35)
-        : task-hover-ta.has-hover ? Colors.accent.with-alpha(0.32) : Colors.border;
-    background: task.picked
-        ? Colors.accent.with-alpha(task-hover-ta.has-hover ? 0.24 : 0.16)
-        : task.selected
-        ? Colors.accent.with-alpha(task-hover-ta.has-hover ? 0.16 : 0.10)
-        : task-hover-ta.has-hover ? Colors.accent.with-alpha(0.11) : Colors.surface;
+    border-color: task.picked || task.selected ? Colors.accent.with-alpha(0.40) : Colors.border;
+    background: task.picked || task.selected ? Colors.accent.with-alpha(0.08)
+        : task-hover-ta.has-hover ? Colors.surface-hover : Colors.surface;
     animate background { duration: Theme.duration-instant; }
     animate border-color { duration: Theme.duration-instant; }
-
-    // The left bar, the states' anchor — drawn, because Slint borders are
-    // uniform and the reference's `border-left: 3px` has no one-property twin.
-    if task.picked || task.selected || task-hover-ta.has-hover : Rectangle {
-        x: 0px;
-        y: 5px;
-        width: 2.5px;
-        height: parent.height - 10px;
-        border-radius: 1.25px;
-        background: task-hover-ta.has-hover && !task.picked && !task.selected
-            ? Colors.accent.with-alpha(0.85)
-            : Colors.accent;
-    }
 
     // Put the row's broad selection target behind its child controls. When this
     // was last in paint order it covered OrgCheck, so a click on the circle only
@@ -674,9 +586,10 @@ component OrgTaskRow inherits Rectangle {
             // front of the same row. Which of the two a click means is Rust's
             // decision, so the callback is the one `toggled` already is.
             checked: UIState.org-selecting ? task.picked : task.done;
-            box-size: 18px;
+            box-size: 20px;
+            priority: task.priority;
             round: !UIState.org-selecting;
-            cross-axis-self-alignment: start;
+            cross-axis-self-alignment: center;
             toggled => { root.toggled(); }
         }
         VerticalLayout {
@@ -690,7 +603,7 @@ component OrgTaskRow inherits Rectangle {
             // the axes, and a centered column took the title Rectangle at its
             // preferred width and parked it mid-row. The outer box's
             // `cross-axis-alignment` is the only centering the row needs.
-            vertical-stretch: 1;
+            vertical-stretch: 0;
             horizontal-stretch: 1;
             max-width: 100000px;
             spacing: 3px;
@@ -704,7 +617,7 @@ component OrgTaskRow inherits Rectangle {
                 // under it to the text's own left.
                 horizontal-stretch: 1;
                 max-width: 100000px;
-                height: 20px;
+                height: 34px;
                 // `x: 0` and a stated alignment: a Text floating in a plain
                 // Rectangle centres itself in this build, and a title that
                 // starts wherever the middle of the row is, is a title that
@@ -715,10 +628,11 @@ component OrgTaskRow inherits Rectangle {
                     text: task.title != "" ? task.title : "无标题";
                     font-family: Typography.ui-font;
                     font-size: Typography.size-ui;
-                    font-weight: Typography.weight-semibold;
+                    font-weight: Typography.weight-medium;
                     color: task.done ? Colors.text-muted : Colors.text-primary;
                     vertical-alignment: center;
-                    overflow: elide;
+                    wrap: word-wrap;
+                    width: parent.width;
                 }
                 // The strike, drawn: the reference animates its own across the
                 // glyphs over 260 ms, which this renderer cannot trace — but the
@@ -733,13 +647,20 @@ component OrgTaskRow inherits Rectangle {
                     background: Colors.text-muted;
                 }
             }
-            HorizontalLayout {
+            if root.has-metadata : HorizontalLayout {
                 // The pills line is dropped whole when it is empty, so a row
                 // without tags is one line of text rather than a gap.
-                visible: task.tag-list.length > 0 || task.list > 0
-                    || task.subtasks-total > 0;
                 height: 17px;
                 spacing: 6px;
+        OrgDue {
+            label: task.due-label;
+            overdue: task.overdue;
+            today: task.due == UIState.org-today;
+        }
+                if task.repeat > 0 : Icon {
+                    name: "refresh"; width: 12px; height: 12px; size: 12px;
+                    color: Colors.text-muted;
+                }
                 if task.list > 0 : OrgPill {
                     text: task.list-name;
                     tint: Colors.block-text(task.list-color);
@@ -755,11 +676,7 @@ component OrgTaskRow inherits Rectangle {
             }
         }
         OrgPrio { slot: task.priority; }
-        OrgDue {
-            label: task.due-label;
-            overdue: task.overdue;
-            today: task.due == UIState.org-today;
-        }
+
         if task.list > 0 : Rectangle {
             width: 9px;
             height: 9px;
@@ -776,7 +693,7 @@ component OrgTaskRow inherits Rectangle {
             // drawn instead — a menu that holds only 恢复 and 彻底删除 is a menu
             // that costs a click to say what a button already says.
             visible: !UIState.org-selecting && !UIState.org-bin-open;
-            opacity: task-hover-ta.has-hover || task.selected ? 1 : 0;
+            opacity: 1;
             clicked => {
                 root.menu-requested(self.absolute-position.x, self.absolute-position.y);
             }
@@ -947,10 +864,13 @@ component OrgBoardCard inherits Rectangle {
         allow-move: true;
         data: UIState.org-card-payload(card.id);
         drag-finished => { UIState.org-drop-list = -2; }
-    }
-    card-ta := TouchArea {
-        mouse-cursor: MouseCursor.pointer;
-        clicked => { root.opened(); }
+        // Keep the click target inside the drag source, as on the document
+        // block handle: an ordinary click opens the task, while moving beyond
+        // the drag threshold carries it to another list column.
+        card-ta := TouchArea {
+            mouse-cursor: MouseCursor.pointer;
+            clicked => { root.opened(); }
+        }
     }
     // 落位环: a two-pixel accent ring around the card that just landed, popped
     // to full the moment the drop commits and walked back to nothing by the
@@ -1276,6 +1196,8 @@ component OrgInput inherits Rectangle {
     // background too); the detail pane's inline title and the 标签 fields are
     // not, because a page of eight filled boxes is a form and this is a page.
     in property <bool> filled: false;
+    // A quiet, inset surface for fields that belong to a floating editor.
+    in property <bool> recessed: false;
     callback edited();
     callback accepted();
 
@@ -1294,14 +1216,10 @@ component OrgInput inherits Rectangle {
     // answer (`QLineEdit { background: %1; … }` with `glassBg(kColorBgElev)`),
     // and it is one step above the page rather than a border, so the field reads
     // as a field and the sort pill beside it still reads as a button.
-    background: root.filled
-        ? (inner.has-focus ? Colors.background : Colors.surface-hover)
-        : (inner.has-focus ? Colors.background
-            : (hover.has-hover ? Colors.hover-fill : transparent));
-    // The focus ring, drawn on the field itself rather than as an outline the
-    // layout would have to reserve room for.
-    border-width: root.filled && inner.has-focus ? 1px : 0px;
-    border-color: Colors.accent;
+    background: inner.has-focus ? Colors.background : Colors.surface;
+    border-width: 1px;
+    border-color: inner.has-focus ? Colors.accent
+        : hover.has-hover ? Colors.border-strong : Colors.border;
     animate background { duration: Theme.duration-instant; }
 
     // Declared first, so it is *under* the text: it exists for the hover fill
@@ -1402,8 +1320,7 @@ component OrgSortBox inherits Rectangle {
     // until there is a reason for one — a fill on hover, the accent on focus.
     // A 1px border on both at rest made a toolbar of two boxes that read as two
     // form fields sitting in a row of buttons.
-    border-color: root.open ? Colors.accent
-        : (ta.has-hover ? Colors.border : transparent);
+    border-color: root.open ? Colors.accent : Colors.border;
     background: root.open || ta.has-hover ? Colors.surface-hover : transparent;
     animate background { duration: Theme.duration-instant; }
 
@@ -1595,9 +1512,23 @@ component OrgEmptyState inherits VerticalLayout {
 }
 
 export component OrganizerArea inherits Rectangle {
+    vertical-stretch: 1;
+    max-height: 100000px;
+    in-out property <bool> task-more-open: false;
+    in-out property <bool> note-replies-open: false;
+    // Detail panels start compact; the narrow grip between list and detail lets
+    // the reader choose more room when a particular task or note needs it.
+    in-out property <length> detail-panel-width: 400px;
+    in-out property <length> detail-panel-grab-x: 0px;
+    in-out property <length> detail-panel-start-width: 400px;
+    in-out property <bool> detail-panel-resizing: false;
+    in property <int> selected-task-id: UIState.org-task-detail.id;
+    in property <int> selected-note-id: UIState.org-note-detail.id;
+    changed selected-task-id => { root.task-more-open = false; }
+    changed selected-note-id => { root.note-replies-open = false; }
     // Transparent for the same reason as the editor: the window's `Colors.page`
     // ramp is the backdrop, so the gradient runs behind the organizer too.
-    background: transparent;
+    background: Colors.background;
     // `horizontal-stretch` alone does **not** grow this area, and the reason is
     // worth the two lines: a `Rectangle` whose content is a layout takes its
     // `max-width` from that layout's preferred width, so the stretch factor has
@@ -1635,11 +1566,13 @@ export component OrganizerArea inherits Rectangle {
     out property <length> note-sort-y: 0px;
 
     HorizontalLayout {
-        padding: 14px;
+        padding: 0px;
         spacing: 0px;
 
         // ── the one card ───────────────────────────────────────────────────
         Rectangle {
+            vertical-stretch: 1;
+            max-height: 100000px;
             horizontal-stretch: 1;
             max-width: 100000px;
             background: transparent;
@@ -1648,9 +1581,14 @@ export component OrganizerArea inherits Rectangle {
                 spacing: 0px;
 
                 // ── the list column (or the board) ──────────────────────────
-                Rectangle {
-                    horizontal-stretch: 1;
+                if UIState.org-tab != 0 || UIState.org-note-detail.id < 0 : Rectangle {
+                    min-width: 280px;
+                    preferred-width: 380px;
                     max-width: 100000px;
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
+                    max-height: 100000px;
+                    background: Colors.surface;
                     clip: true;
 
                     VerticalLayout {
@@ -1681,101 +1619,46 @@ export component OrganizerArea inherits Rectangle {
                         // SPEC §四十一 / ADR-0111 replaces this row entirely — the
                         // view's title and its counts are not the question being
                         // asked any more.
+                        if !UIState.org-selecting : VerticalLayout {
+                            spacing: 12px;
+                            HorizontalLayout {
+                                height: 32px; spacing: 8px;
+                                Text {
+                                    text: UIState.org-tab == 0 ? "笔记" : "任务";
+                                    font-size: 20px; font-family: Typography.ui-font;
+                                    font-weight: 600; color: Colors.text-primary;
+                                }
+                                Text { text: UIState.org-view-count-label; font-size: Typography.size-caption; color: Colors.text-muted; vertical-alignment: center; }
+                                Rectangle { horizontal-stretch: 1; }
+                                IconButton { icon-name: "refresh"; icon-color: Colors.text-muted; hover-color: Colors.accent-text; clicked => { UIState.sync-now-all(); } }
+                            }
+                            HorizontalLayout {
+                                height: 32px; spacing: 8px;
+                                Rectangle {
+                                    horizontal-stretch: 1; min-width: 100px; max-width: 100000px;
+                                    border-radius: Theme.radius-sm; border-width: 1px;
+                                    border-color: Colors.border; background: Colors.background;
+                                    HorizontalLayout {
+                                        padding-left: 10px; padding-right: 8px; spacing: 8px;
+                                        Text { text: UIState.org-view-title; horizontal-stretch: 1; overflow: elide; font-family: Typography.ui-font; font-size: Typography.size-ui; color: Colors.text-primary; vertical-alignment: center; }
+                                        if UIState.org-tab == 1 : Icon { name: "chevron-down"; width: 14px; height: 14px; size: 14px; color: Colors.text-muted; }
+                                    }
+                                    if UIState.org-tab == 1 : TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { filter-menu.show(); } }
+                                }
+                                if UIState.org-tab == 1 && !UIState.org-bin-open : OrgSeg {
+                                    selected: UIState.org-mode;
+                                    picked(m) => { UIState.org-mode-picked(m); }
+                                }
+                            }
+                        }
+
                         if !UIState.org-selecting : HorizontalLayout {
                             height: 30px;
-                            spacing: 8px;
-                            Text {
-                                text: UIState.org-view-title;
-                                font-family: Typography.ui-font;
-                                font-size: Typography.size-ui-lg;
-                                font-weight: Typography.weight-semibold;
-                                color: Colors.text-primary;
-                                vertical-alignment: center;
-                            }
-                            Text {
-                                text: UIState.org-view-count-label;
-                                font-family: Typography.ui-font;
-                                font-size: Typography.size-caption;
-                                color: Colors.text-muted;
-                                vertical-alignment: center;
-                            }
-                            Rectangle { horizontal-stretch: 1; }
-                            // 回收站's own verb: the whole half on screen, purged as
-                            // one undoable step. Drawn only while the bin is open —
-                            // a "clear the bin" button over a list of notes is a
-                            // button nobody can explain.
-                            if UIState.org-bin-open : OrgButton {
-                                label: "清空回收站";
-                                font-size: Typography.size-caption;
-                                danger: true;
-                                clicked => { UIState.org-bin-emptied(); }
-                            }
-                            // 指令: the door an AI's answer comes back through. Next
-                            // to 多选 because they are the two ways this page is
-                            // written to in bulk — one by hand, one by pasting what
-                            // 复制 sent out. Both tabs have it: the batches differ but
-                            // the door does not.
-                            // Neither is offered while the bin is open: 指令 edits
-                            // rows on a list and 多选 picks a set of them, and a bin
-                            // is neither. 清空回收站 above is the bin's own bulk verb.
-                            if (UIState.org-tab == 0 || UIState.org-mode == 0) && !UIState.org-bin-open : OrgButton {
-                                label: "指令…";
-                                font-size: Typography.size-caption;
-                                clicked => { UIState.org-command-opened(UIState.org-tab); }
-                            }
-                            // The door to 多选. The reference opens it with a long
-                            // press, which this window has no gesture for; a
-                            // button is the desktop's answer, and it is also the
-                            // only door the 笔记 tab has — a note row has no ⋯.
-                            if (UIState.org-tab == 0 || UIState.org-mode == 0) && !UIState.org-bin-open : OrgButton {
-                                label: "多选";
-                                font-size: Typography.size-caption;
-                                clicked => { UIState.org-select-entered(UIState.org-tab); }
-                            }
-                            // 复制全部: the reference's own `btnCopy`, and the
-                            // inbox's way back out — every note the list is
-                            // showing, bodies with their 唯一 IDs, as one block
-                            // for the clipboard. Beside 刷新 because both are
-                            // "the list, as it is right now" verbs, and hidden
-                            // in the bin, whose contents are not what anyone
-                            // sends anywhere.
-                            if UIState.org-tab == 0 && !UIState.org-bin-open : OrgButton {
-                                label: "复制全部";
-                                font-size: Typography.size-caption;
-                                clicked => { UIState.org-notes-copy-all(); }
-                            }
-                            // 刷新: a round with every paired device, right now.
-                            // It is the only button in this row that leaves the
-                            // app — everything else edits what is on screen —
-                            // and it is here rather than only in the settings
-                            // dialog because that is where a note is read *and*
-                            // written, so a row that arrived from another device
-                            // while you were in the list is the moment the button
-                            // is worth pressing. It is drawn whether or not a
-                            // peer exists right now (ADR-0140): the desktop is
-                            // the always-on half of a pair, and a round with
-                            // nobody to dial is a harmless empty round — a 刷新
-                            // that hid itself when the network was quiet read as
-                            // no 刷新 at all.
-                            //
-                            // The icon rather than the word, in a 30 px box —
-                            // the reference's `btnRefresh` (`setFixedSize(si(30),
-                            // si(30))`, text `⟳`, tooltip 刷新 (F5)). It is a
-                            // 30 px button because the row it sits in already
-                            // carries three words and a chip row; a fourth word
-                            // made the header wider than the list it heads.
-                            IconButton {
-                                icon-name: "refresh";
-                                icon-color: Colors.text-secondary;
-                                size: 30px;
-                                clicked => { UIState.sync-now-all(); }
-                            }
-                            // 列表/平铺 says nothing about a bin, so the segmented
-                            // control goes with it.
-                            if UIState.org-tab == 1 && !UIState.org-bin-open : OrgSeg {
-                                selected: UIState.org-mode;
-                                picked(m) => { UIState.org-mode-picked(m); }
-                            }
+                            spacing: 6px;
+                            OrgButton { label: "多选"; accent: true; font-size: Typography.size-caption; clicked => { UIState.org-select-entered(UIState.org-tab); } }
+                            OrgButton { label: "批量操作指令…"; accent: true; font-size: Typography.size-caption; clicked => { UIState.org-command-opened(UIState.org-tab); } }
+                            if UIState.org-tab == 0 : OrgButton { label: "复制全部笔记"; accent: true; font-size: Typography.size-caption; clicked => { UIState.org-notes-copy-all(); } }
+                            if UIState.org-bin-open : OrgButton { label: "清空回收站"; danger: true; font-size: Typography.size-caption; clicked => { UIState.org-bin-emptied(); } }
                         }
 
                         if UIState.org-selecting : HorizontalLayout {
@@ -1848,11 +1731,17 @@ export component OrganizerArea inherits Rectangle {
                         // what to search for, and what order to read in. A row of
                         // its own rather than a third header line, so the title row
                         // stays the same shape on both halves.
-                        if UIState.org-tab == 0 && !UIState.org-selecting : HorizontalLayout {
-                            height: 30px;
+                        Rectangle { height: 1px; background: Colors.border; }
+                        if UIState.org-tab == 0 && !UIState.org-selecting : VerticalLayout {
+                            height: 76px;
                             spacing: 8px;
-                            OrgInput {
-                                grow: false;
+                            if !UIState.org-note-search-open : OrgButton {
+                                label: "搜索笔记";
+                                font-size: Typography.size-caption;
+                                clicked => { UIState.org-note-search-open = true; }
+                            }
+                            if UIState.org-note-search-open : OrgInput {
+                                grow: true;
                                 filled: true;
                                 // 240, the reference's own `m_search->setFixedWidth(
                                 // si(240))`. A needle is searched in, so it is
@@ -1865,56 +1754,58 @@ export component OrganizerArea inherits Rectangle {
                                 value <=> UIState.org-query;
                                 edited => { UIState.org-query-changed(); }
                             }
-                            // The gap that held the chips. The bar is now left
-                            // block + right block, and without this the 排序 box
-                            // and 回收站 would sit against the needle.
-                            Rectangle { horizontal-stretch: 1; }
-                            // 排序: the reference's `sortBox`, and the only
-                            // control on this half's bar that is not a filter —
-                            // it does not narrow the list, it reorders it, which
-                            // is why it sits at the bar's *end* beside the 回收站
-                            // door rather than among the chips. A reader scanning
-                            // the chips is asking "which notes?", and a box that
-                            // answers "in what order?" in the middle of them reads
-                            // as a fourth filter.
-                            //
-                            // Hidden in the bin for the reason the bar's other
-                            // controls are: a binned list's order is not a
-                            // question anyone asks, and the bin's counts are drawn
-                            // from the other half of the catalog.
-                            if !UIState.org-bin-open : OrgSortBox {
-                                labels: root.note-sort-names;
-                                selected: UIState.org-note-sort;
-                                open: UIState.org-note-sort-open;
-                                // The box reports its position in **window**
-                                // coordinates; the list is drawn here, so it needs
-                                // them in the area's. The subtraction is the whole
-                                // reason the callback exists — a child can read its
-                                // own `absolute-position` and a parent can read
-                                // its own, but neither can read the other's, so the
-                                // two numbers have to meet in the middle.
-                                report-position(x, y) => {
-                                    root.note-sort-x = x - root.absolute-position.x;
-                                    root.note-sort-y = y - root.absolute-position.y
+                            HorizontalLayout {
+                                height: 30px;
+                                spacing: 8px;
+
+                                // The gap that held the chips. The bar is now left
+                                // block + right block, and without this the 排序 box
+                                // and 回收站 would sit against the needle.
+                                Rectangle { horizontal-stretch: 1; }
+                                // 排序: the reference's `sortBox`, and the only
+                                // control on this half's bar that is not a filter —
+                                // it does not narrow the list, it reorders it, which
+                                // is why it sits at the bar's *end* beside the 回收站
+                                // door rather than among the chips. A reader scanning
+                                // the chips is asking "which notes?", and a box that
+                                // answers "in what order?" in the middle of them reads
+                                // as a fourth filter.
+                                //
+                                // Hidden in the bin for the reason the bar's other
+                                // controls are: a binned list's order is not a
+                                // question anyone asks, and the bin's counts are drawn
+                                // from the other half of the catalog.
+                                if !UIState.org-bin-open : OrgSortBox {
+                                    labels: root.note-sort-names;
+                                    selected: UIState.org-note-sort;
+                                    open: UIState.org-note-sort-open;
+                                    // The box reports its position in **window**
+                                    // coordinates; the list is drawn here, so it needs
+                                    // them in the area's. The subtraction is the whole
+                                    // reason the callback exists — a child can read its
+                                    // own `absolute-position` and a parent can read
+                                    // its own, but neither can read the other's, so the
+                                    // two numbers have to meet in the middle.
+                                    report-position(x, y) => {
+                                        root.note-sort-x = x - root.absolute-position.x;
+                                        root.note-sort-y = y - root.absolute-position.y
                                         + 30px + 4px;
+                                    }
+                                    opened => { UIState.org-note-sort-open = true; }
+                                    picked(slot) => {
+                                        UIState.org-note-sort-open = false;
+                                        UIState.org-note-sort-picked(slot);
+                                    }
+                                    closed => { UIState.org-note-sort-open = false; }
                                 }
-                                opened => { UIState.org-note-sort-open = true; }
-                                picked(slot) => {
-                                    UIState.org-note-sort-open = false;
-                                    UIState.org-note-sort-picked(slot);
+                                if !UIState.org-bin-open : OrgButton {
+                                    label: UIState.org-note-descending ? "倒序" : "顺序";
+                                    font-size: Typography.size-caption;
+                                    clicked => { UIState.org-note-sort-direction-toggled(); }
                                 }
-                                closed => { UIState.org-note-sort-open = false; }
+
                             }
-                            OrgFilterChip {
-                                // The count only when there is one: the nav row this
-                                // replaces hid a zero too, and "回收站 0" reads like a
-                                // filter that found nothing rather than a place.
-                                label: "回收站" + (UIState.org-bin-note-count > 0
-                                    ? "  " + UIState.org-bin-note-count
-                                    : "");
-                                selected: UIState.org-bin-open;
-                                clicked => { UIState.org-bin-toggled(); }
-                            }
+
                         }
 
                         // 回收站 is a mode *over* the list, so it takes the list's
@@ -1944,16 +1835,26 @@ export component OrganizerArea inherits Rectangle {
                                     selected: UIState.org-sort == i;
                                     clicked => { UIState.org-sort-picked(i); }
                                 }
+                                OrgButton {
+                                    label: UIState.org-task-descending ? "倒序" : "顺序";
+                                    font-size: Typography.size-caption;
+                                    clicked => { UIState.org-task-sort-direction-toggled(); }
+                                }
                             }
 
                             ListView {
                                 vertical-stretch: 1;
-                                for entry[i] in UIState.task-rows : OrgTaskRow {
-                                    task: entry;
-                                    toggled => { UIState.org-task-done-toggled(entry.id); }
-                                    opened => { UIState.org-task-selected(entry.id); }
-                                    menu-requested(x, y) => {
-                                        UIState.org-task-menu-requested(entry.id, x, y);
+                                for entry[i] in UIState.task-rows : Rectangle {
+                                    height: task-item.height + 8px;
+                                    task-item := OrgTaskRow {
+                                        x: 1px; y: 0px;
+                                        width: parent.width - 2px;
+                                        task: entry;
+                                        toggled => { UIState.org-task-done-toggled(entry.id); }
+                                        opened => { UIState.org-task-selected(entry.id); }
+                                        menu-requested(x, y) => {
+                                            UIState.org-task-menu-requested(entry.id, x, y);
+                                        }
                                     }
                                 }
                             }
@@ -2045,7 +1946,7 @@ export component OrganizerArea inherits Rectangle {
                             // would clip the second. The wrapper only adds the
                             // gutter; every other number is the layout's own.
                             for row[i] in UIState.note-rows : Rectangle {
-                                height: note-card.preferred-height + 6px;
+                                height: note-card.preferred-height + 10px;
                                 background: transparent;
 
                                 note-card := Rectangle {
@@ -2055,9 +1956,9 @@ export component OrganizerArea inherits Rectangle {
                                     // the card to the top of its item box is what
                                     // puts the whole 11 px *between* two cards.
                                     y: 0px;
-                                    width: parent.width;
-                                    height: parent.height - 6px;
-                                border-radius: Theme.radius-lg;
+                                    width: parent.width - 14px;
+                                    height: parent.height - 10px;
+                                border-radius: Theme.radius-md;
                                 // **A card, not a divider-separated row.** The Compose
                                 // shell has drawn every note this way since its inbox
                                 // arrived, and the two shells are meant to look the
@@ -2072,16 +1973,14 @@ export component OrganizerArea inherits Rectangle {
                                 // ⋯ belongs to" without lifting its fill.
                                 border-width: 1px;
                                 border-color: row.selected || row.picked
-                                    ? Colors.accent
+                                    ? Colors.accent.with-alpha(0.36)
                                     : note-ta.has-hover
-                                    ? Colors.accent.with-alpha(0.60)
+                                    ? Colors.accent.with-alpha(0.35)
                                     : Colors.border;
-                                background: row.selected || row.picked
-                                    // Selection marks which note owns the detail
-                                    // pane; keep the accent wash subtle so body text
-                                    // remains easy to read on the card itself.
-                                    ? Colors.p.bg-elev2.mix(Colors.p.accent, 0.07)
-                                    : Colors.surface-hover;
+                                // Selection is already shown in the detail pane and
+                                // checkbox. Keep the card's paper fill stable so
+                                // selecting a note never washes out its text.
+                                background: Colors.surface;
                                 animate border-color { duration: Theme.duration-instant; }
 
                                 VerticalLayout {
@@ -2096,19 +1995,19 @@ export component OrganizerArea inherits Rectangle {
                                     // air before the leftmost glyph is what makes
                                     // the card read as a card and not as a
                                     // full-bleed row with a border.
-                                    padding-top: 10px;
-                                    padding-bottom: 10px;
-                                    padding-left: 14px;
+                                    padding-top: 14px;
+                                    padding-bottom: 14px;
+                                    padding-left: 16px;
                                     // While the bin is open the row's own two verbs
                                     // sit at its right edge, so the text stops short
                                     // of them: a title elided *under* a button is a
                                     // title nobody can read. 10 px rather than the
                                     // 8 px the card used, matching the top and the
                                     // reference's own right margin.
-                                    padding-right: UIState.org-bin-open ? 134px : 10px;
+                                    padding-right: UIState.org-bin-open ? 134px : 16px;
                                     // 6 px, the reference's own `m_col->setSpacing(
                                     // si(6))` between the header line and the body.
-                                    spacing: 6px;
+                                    spacing: 10px;
                                     // the age line: what the reference puts first,
                                     // and where the row's ⋯ lives — the corner every
                                     // other per-row menu in this window is in
@@ -2153,16 +2052,7 @@ export component OrganizerArea inherits Rectangle {
                                     // preferred height is not 20 px — so without
                                     // this the card grew a sliver of empty
                                     // background under the last line of every note.
-                                    if row.title != "" : Text {
-                                        height: 20px;
-                                        text: row.title;
-                                        font-family: Typography.ui-font;
-                                        font-size: Typography.size-ui;
-                                        font-weight: Typography.weight-semibold;
-                                        color: Colors.text-primary;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                    }
+
                                     // The note's words, in the **ink** colour and
                                     // wrapped — the reference paints its body at 14 px
                                     // in the foreground colour and folds it, and a
@@ -2172,11 +2062,11 @@ export component OrganizerArea inherits Rectangle {
                                     // this column is three lines of card; the `min`
                                     // keeps a one-line note a one-line card, and the
                                     // elide marks what a longer note folded off.
-                                    if row.body != "" : Text {
-                                        height: min(self.preferred-height, 60px);
-                                        text: row.body;
+                                    if row.body != "" || row.title != "" : Text {
+                                        height: min(self.preferred-height, 112px);
+                                        text: row.title != "" ? row.title + (row.body != "" ? "\n" + row.body : "") : row.body;
                                         font-family: Typography.ui-font;
-                                        font-size: Typography.size-ui;
+                                        font-size: 14px;
                                         color: Colors.text-primary;
                                         wrap: word-wrap;
                                         overflow: elide;
@@ -2186,7 +2076,7 @@ export component OrganizerArea inherits Rectangle {
                                     // is what the reference draws as （空笔记）.
                                     if row.title == "" && row.body == "" : Text {
                                         height: 20px;
-                                        text: "无标题";
+                                        text: "空笔记";
                                         font-family: Typography.ui-font;
                                         font-size: Typography.size-ui;
                                         color: Colors.text-muted;
@@ -2257,7 +2147,7 @@ export component OrganizerArea inherits Rectangle {
                                     icon-color: Colors.text-muted;
                                     size: 22px;
                                     visible: !UIState.org-selecting && !UIState.org-bin-open;
-                                    opacity: note-ta.has-hover || row.selected ? 1 : 0;
+                                    opacity: 1;
                                     clicked => {
                                         UIState.org-note-menu-requested(
                                             row.id,
@@ -2311,60 +2201,7 @@ export component OrganizerArea inherits Rectangle {
                         }
                     }
 
-                    // ── the 悬浮 ＋ (ADR-0115) ─────────────────────────────────
-                    // The reference shell's Fab: 56 px, round, the accent colour,
-                    // 20 px in from the list's bottom-right corner. It is the notes
-                    // tab's only door to a new note, and what it opens is the
-                    // *capture layer* rather than an empty row: the reference's Fab
-                    // opens its editor, and a note born blank is a row the undo
-                    // stack has to carry on behalf of a keystroke that never came.
-                    //
-                    // It floats over the list, as the reference's does — the last
-                    // rows scroll under it, which is the price of a corner that
-                    // never moves with the content.
-                    //
-                    // Declared after the `VerticalLayout` so it is *above* the rows
-                    // it covers; gone in the bin and while 多选 is on, where a note
-                    // is not what the user came for.
-                    if UIState.org-tab == 0 && !UIState.org-bin-open && !UIState.org-selecting : Rectangle {
-                        x: parent.width - self.width - 20px;
-                        y: parent.height - self.height - 20px;
-                        width: 56px;
-                        height: 56px;
 
-                        // The shadow, drawn the way `ContextMenu` draws its own: this
-                        // renderer has no drop-shadow, so it is a plate behind the
-                        // disc, offset down and right.
-                        Rectangle {
-                            x: 1px;
-                            y: 2px;
-                            width: parent.width;
-                            height: parent.height;
-                            border-radius: 28px;
-                            background: Colors.shadow;
-                        }
-                        Rectangle {
-                            width: parent.width;
-                            height: parent.height;
-                            border-radius: 28px;
-                            background: fab-ta.has-hover ? Colors.accent-text : Colors.accent;
-                            animate background { duration: Theme.duration-instant; }
-
-                            Icon {
-                                x: (parent.width - self.width) / 2;
-                                y: (parent.height - self.height) / 2;
-                                width: 26px;
-                                height: 26px;
-                                name: "plus";
-                                size: 26px;
-                                color: Colors.text-on-accent;
-                            }
-                        }
-                        fab-ta := TouchArea {
-                            mouse-cursor: MouseCursor.pointer;
-                            clicked => { UIState.org-capture-opened(); }
-                        }
-                    }
                 }
 
                 // ── the detail column (任务's list mode, ADR-0118) ──────────
@@ -2374,24 +2211,319 @@ export component OrganizerArea inherits Rectangle {
                 // the same. Its own edge goes with it: a divider with nothing
                 // behind it is a line to nowhere.
                 //
-                // The 笔记 half has no docked column any more: a note opens as a
-                // 浮层 over the list it was picked from (see the card's own
-                // overlay below), which is what lets the list own the card.
+                // The note editor occupies its own column; list rows stay visible.
+                if UIState.org-tab == 0 && UIState.org-note-detail.id >= 0 : Rectangle {
+                    min-width: 340px;
+                    preferred-width: 720px;
+                    max-width: 100000px;
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
+                    max-height: 100000px;
+                    if UIState.org-capture-open && !UIState.quick-note-host : NoteCaptureCard {
+                        x: 0px; y: 0px;
+                        width: parent.width;
+                        height: parent.height;
+                        outlined: true;
+                        draft <=> UIState.org-capture-draft;
+                        caret: UIState.org-capture-caret;
+                        suggestions: UIState.org-tag-suggestions;
+                        submitted => { UIState.org-capture-sent(); }
+                        dismissed => { UIState.org-capture-closed(); }
+                        draft-edited => { UIState.org-capture-draft-changed(); }
+                        suggestion-picked(tag) => { UIState.org-tag-suggest-picked(tag); }
+                    }
+                    if UIState.org-note-detail.id >= 0 && (!UIState.org-capture-open || UIState.quick-note-host) : Rectangle {
+                        x: 0px; y: 0px;
+                        width: parent.width;
+                        height: parent.height;
+                        border-radius: 0px;
+                        border-width: 0px;
+                        border-color: Colors.divider;
+                        background: Colors.background;
+                        clip: true;
+
+                        // Swallows the card's own clicks — its padding, its title, the
+                        // space under the last field — so that the rows beside it stay
+                        // clickable and its own margin is not a hole onto them.
+                        // Declared first, so every control below sits above it.
+                        TouchArea { }
+
+                        // The fields are a column taller than the card can be, so the
+                        // page scrolls rather than clipping 详细信息 off the bottom.
+                        ScrollView {
+                            VerticalLayout {
+                                padding: 24px;
+                                spacing: 16px;
+
+                                HorizontalLayout {
+                                    height: 32px;
+                                    spacing: 4px;
+                                    Text {
+                                        text: UIState.org-note-detail.when;
+                                        horizontal-stretch: 1;
+                                        font-family: Typography.ui-font;
+                                        font-size: Typography.size-caption;
+                                        font-weight: 400;
+                                        color: Colors.text-muted;
+                                        vertical-alignment: center;
+                                    }
+                                    IconButton {
+                                        icon-name: "chevron-left";
+                                        icon-color: Colors.text-muted;
+                                        clicked => { UIState.org-note-closed(); }
+                                    }
+                                    IconButton {
+                                        icon-name: "star";
+                                        icon-color: UIState.org-note-detail.pinned
+                                        ? Colors.accent-text
+                                        : Colors.text-muted;
+                                        clicked => { UIState.org-note-pin-toggled(UIState.org-note-detail.id); }
+                                    }
+                                    // 转为待办: the note becomes a task and the note goes —
+                                    // no dialog, because the notice band is the way back.
+                                    IconButton {
+                                        icon-name: "todo-check";
+                                        icon-color: Colors.text-muted;
+                                        hover-color: Colors.accent-text;
+                                        clicked => { UIState.org-note-to-task(UIState.org-note-detail.id); }
+                                    }
+                                    IconButton {
+                                        icon-name: "trash";
+                                        icon-color: Colors.text-muted;
+                                        hover-color: Colors.danger;
+                                        clicked => { UIState.org-note-deleted(UIState.org-note-detail.id); }
+                                    }
+                                    // The panel's own door, in the corner every popup in
+                                    // this window closes from. Escape is the same ask.
+                                }
+
+                                // Legacy title text is retained as ordinary content; new memos only edit a body.
+                                if UIState.org-note-detail.title != "" : Text {
+                                    text: UIState.org-note-detail.title;
+                                    font-family: Typography.ui-font;
+                                    font-size: 15px;
+                                    color: Colors.text-primary;
+                                    wrap: word-wrap;
+                                }
+
+
+
+                                OrgInput {
+                                    placeholder: "开始记录…";
+                                    multiline: true;
+                                    recessed: true;
+                                    hint-height: max(320px, UIState.window-h - 440px);
+                                    font-size: 15px;
+                                    value <=> UIState.org-note-body-draft;
+                                    edited => { UIState.org-field-edited(2); }
+                                }
+
+                                HorizontalLayout {
+                                    height: 30px;
+                                    spacing: 8px;
+                                    OrgField { name: "标签"; width: 40px; }
+                                    OrgInput {
+                                        placeholder: "用空格分隔标签";
+                                        recessed: true;
+                                        value <=> UIState.org-note-tags-draft;
+                                        edited => { UIState.org-field-edited(3); }
+                                    }
+                                }
+
+                                // 引用 (SPEC §四十一): the notes that answer this one, and
+                                // the field that writes them — a reply is a note whose
+                                // `ref_note` names this one (core ADR-0001). Committed on
+                                // Enter or the 评论 button and not on a settle, because a
+                                // reply is a *create* and half a row is not a row.
+                                VerticalLayout {
+                                    spacing: 4px;
+                                    Rectangle {
+                                        height: 26px;
+                                        HorizontalLayout {
+                                            spacing: 6px;
+                                            cross-axis-alignment: center;
+                                            Icon {
+                                                width: 14px;
+                                                height: 14px;
+                                                name: root.note-replies-open ? "chevron-down" : "chevron-right";
+                                                size: 14px;
+                                                color: Colors.text-muted;
+                                            }
+                                            Text {
+                                                text: "评论 · " + UIState.org-note-replies.length;
+                                                font-family: Typography.ui-font;
+                                                font-size: Typography.size-caption;
+                                                color: Colors.text-muted;
+                                                vertical-alignment: center;
+                                            }
+                                            Rectangle { horizontal-stretch: 1; }
+                                        }
+                                        TouchArea {
+                                            mouse-cursor: MouseCursor.pointer;
+                                            clicked => { root.note-replies-open = !root.note-replies-open; }
+                                        }
+                                    }
+                                    if root.note-replies-open : VerticalLayout {
+                                        spacing: 4px;
+                                        HorizontalLayout {
+                                            height: 30px;
+                                            spacing: 8px;
+                                            OrgInput {
+                                                placeholder: "写一条评论…";
+                                                recessed: true;
+                                                value <=> UIState.org-reply-draft;
+                                                accepted => { UIState.org-reply-submitted(); }
+                                            }
+                                            OrgButton {
+                                                label: "评论";
+                                                accent: true;
+                                                font-size: Typography.size-caption;
+                                                clicked => { UIState.org-reply-submitted(); }
+                                            }
+                                        }
+                                        for reply[i] in UIState.org-note-replies : Rectangle {
+                                            // The card hugs its text, the board card's own
+                                            // idiom (`height` off the wrapped text's
+                                            // preferred-height): a reply is a line or two, and
+                                            // the card's leftover height must not be poured
+                                            // into the newest one.
+                                            height: reply-text.preferred-height + 14px + 18px;
+                                            background: Colors.hover-fill;
+                                            border-radius: Theme.radius-sm;
+                                            VerticalLayout {
+                                                padding: 8px;
+                                                spacing: 2px;
+                                                reply-text := Text {
+                                                    text: reply.body != "" ? reply.body : reply.title;
+                                                    font-family: Typography.ui-font;
+                                                    font-size: Typography.size-ui;
+                                                    color: Colors.text-primary;
+                                                    wrap: word-wrap;
+                                                }
+                                                OrgMeta { tags: reply.tags; when: reply.when; height: 14px; }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 详细信息: what the store holds about this note, and
+                                // the one thing it does not hold.
+                                //
+                                // A disclosure **below** the body rather than the
+                                // reference's bottom sheet, for two reasons. Slint has
+                                // no sheet, and a popup window for six read-only rows
+                                // is a window inside a window; and opening it must not
+                                // move the field the user is typing into — above the
+                                // body it would shove 正文 down every time.
+                                //
+                                // The header is a Rectangle with a TouchArea under its
+                                // text: a layout child that is only a row of text has
+                                // nothing to click on for the empty part of the card.
+                                Rectangle {
+                                    height: 24px;
+                                    details-ta := TouchArea {
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => {
+                                            UIState.org-note-details-open = !UIState.org-note-details-open;
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        cross-axis-alignment: center;
+                                        Icon {
+                                            width: 14px;
+                                            height: 14px;
+                                            name: UIState.org-note-details-open
+                                            ? "chevron-down"
+                                            : "chevron-right";
+                                            size: 14px;
+                                            color: Colors.text-muted;
+                                        }
+                                        Text {
+                                            text: "详细信息";
+                                            font-family: Typography.ui-font;
+                                            font-size: Typography.size-caption;
+                                            color: Colors.text-muted;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                if UIState.org-note-details-open : VerticalLayout {
+                                    spacing: 2px;
+                                    OrgDetailRow { label: "编号"; value: UIState.org-note-details.id; }
+                                    // SPEC §四十一's 唯一 ID: what 复制 hands an AI and
+                                    // what a batch instruction names this note by. Next to
+                                    // 编号 because they are both "which note", and only one
+                                    // of them survives a sync.
+                                    OrgDetailRow { label: "唯一 ID"; value: UIState.org-note-details.uuid; }
+                                    OrgDetailRow { label: "创建"; value: UIState.org-note-details.created; }
+                                    OrgDetailRow { label: "修改"; value: UIState.org-note-details.edited; }
+                                    OrgDetailRow { label: "标签"; value: UIState.org-note-details.tags; }
+                                    OrgDetailRow { label: "长度"; value: UIState.org-note-details.length; }
+                                    OrgDetailRow { label: "置顶"; value: UIState.org-note-details.pinned; }
+                                    // The reference says this out loud instead of
+                                    // painting an empty 历史 list: `quire-core` keeps
+                                    // one copy of a note, so there is no version to
+                                    // restore to — 撤销 walks an edit back, and that
+                                    // is all there is.
+                                    Text {
+                                        text: "没有历史版本：资料库只保存当前这一份，撤销可以回退编辑，但没有按时间恢复的版本。";
+                                        wrap: word-wrap;
+                                        font-family: Typography.ui-font;
+                                        font-size: Typography.size-caption;
+                                        color: Colors.text-muted;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if UIState.org-tab == 1 && UIState.org-mode == 0 : Rectangle {
-                    width: 1px;
-                    background: Colors.divider;
+                    width: 7px;
+                    vertical-stretch: 1;
+                    max-height: 100000px;
+                    background: resize-task.has-hover || root.detail-panel-resizing
+                        ? Colors.hover-fill : transparent;
+                    resize-task := TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        mouse-cursor: MouseCursor.col-resize;
+                        pointer-event(e) => {
+                            if (e.kind == PointerEventKind.down) {
+                                root.detail-panel-resizing = true;
+                                root.detail-panel-start-width = root.detail-panel-width;
+                                root.detail-panel-grab-x = self.mouse-x;
+                            } else if (e.kind == PointerEventKind.move && root.detail-panel-resizing) {
+                                    root.detail-panel-width = min(700px, max(220px,
+                                    root.detail-panel-start-width - (self.mouse-x - root.detail-panel-grab-x)));
+                            } else if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) {
+                                root.detail-panel-resizing = false;
+                            }
+                        }
+                    }
                 }
                 if UIState.org-tab == 1 && UIState.org-mode == 0 : Rectangle {
-                    min-width: 340px;
-                    max-width: 340px;
+                    min-width: 220px;
+                    preferred-width: root.detail-panel-width;
+                    max-width: 700px;
+                    vertical-stretch: 1;
+                    max-height: 100000px;
+                    border-radius: 0px;
+                    border-width: 0px;
+                    border-color: Colors.border;
                     clip: true;
                     background: Colors.background;
 
                     // the column is 任务's alone (the gate above says so), so the
                     // pane inside it does not repeat the test
+                    ScrollView {
                     VerticalLayout {
-                        padding: 16px;
-                        spacing: 10px;
+                        max-width: 760px;
+                        padding: 28px;
+                        spacing: 16px;
+                        Text { text: "任务详情"; height: 22px; font-size: Typography.size-caption; font-weight: 600; color: Colors.text-primary; }
 
                         if UIState.org-task-detail.id < 0 : Text {
                             text: "选择一条任务，或按 ＋ 新建。";
@@ -2404,8 +2536,8 @@ export component OrganizerArea inherits Rectangle {
                             spacing: 10px;
 
                             HorizontalLayout {
-                                height: 32px;
-                                spacing: 8px;
+                                    height: 64px;
+                                spacing: 12px;
                                 cross-axis-alignment: center;
                                 OrgCheck {
                                     checked: UIState.org-task-detail.done;
@@ -2414,8 +2546,10 @@ export component OrganizerArea inherits Rectangle {
                                     toggled => { UIState.org-task-done-toggled(UIState.org-task-detail.id); }
                                 }
                                 OrgInput {
-                                    placeholder: "任务";
-                                    font-size: Typography.size-ui-lg;
+                                    placeholder: "任务标题";
+                                    multiline: true;
+                                    hint-height: 60px;
+                                    font-size: 22px;
                                     value <=> UIState.org-task-title-draft;
                                     edited => { UIState.org-field-edited(4); }
                                 }
@@ -2430,42 +2564,12 @@ export component OrganizerArea inherits Rectangle {
                             HorizontalLayout {
                                 height: 30px;
                                 spacing: 8px;
-                                OrgField { name: "清单"; width: 40px; }
-                                Rectangle {
-                                    horizontal-stretch: 1;
-                                    border-radius: Theme.radius-sm;
-                                    border-width: 1px;
-                                    border-color: Colors.border;
-                                    HorizontalLayout {
-                                        padding-left: 3px;
-                                        padding-right: 3px;
-                                        spacing: 2px;
-                                        for entry[i] in UIState.task-list-rows : OrgButton {
-                                            label: entry.name;
-                                            color-slot: entry.smart ? -1 : entry.color;
-                                            font-size: Typography.size-caption;
-                                            selected: entry.smart
-                                                ? UIState.org-task-detail.list <= 0
-                                                : UIState.org-task-detail.list == entry.id;
-                                            clicked => {
-                                                UIState.org-task-list-set(
-                                                    UIState.org-task-detail.id,
-                                                    entry.smart ? -1 : entry.id);
-                                            }
-                                        }
-                                        Rectangle { horizontal-stretch: 1; }
-                                    }
-                                }
-                            }
-
-                            HorizontalLayout {
-                                height: 30px;
-                                spacing: 8px;
                                 OrgField { name: "优先级"; width: 40px; }
                                 Rectangle {
                                     horizontal-stretch: 1;
+                                    max-width: 260px;
                                     border-radius: Theme.radius-sm;
-                                    border-width: 1px;
+                                    border-width: 0px;
                                     border-color: Colors.border;
                                     HorizontalLayout {
                                         padding-left: 3px;
@@ -2519,51 +2623,121 @@ export component OrganizerArea inherits Rectangle {
                                 }
                             }
 
-                            HorizontalLayout {
-                                height: 30px;
-                                spacing: 8px;
-                                OrgField { name: "重复"; width: 40px; }
-                                Rectangle {
-                                    horizontal-stretch: 1;
-                                    border-radius: Theme.radius-sm;
-                                    border-width: 1px;
-                                    border-color: Colors.border;
-                                    HorizontalLayout {
-                                        padding-left: 3px;
-                                        padding-right: 3px;
-                                        spacing: 2px;
-                                        for name[i] in root.repeat-names : OrgButton {
-                                            label: name;
-                                            font-size: Typography.size-caption;
-                                            selected: UIState.org-task-detail.repeat == i;
-                                            clicked => {
-                                                UIState.org-task-repeat-set(
-                                                    UIState.org-task-detail.id, i);
-                                            }
-                                        }
-                                        Rectangle { horizontal-stretch: 1; }
+                            Rectangle {
+                                height: 34px;
+                                border-radius: Theme.radius-sm;
+                                border-width: 1px;
+                                border-color: Colors.border;
+                                background: Colors.surface;
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 8px;
+                                    spacing: 6px;
+                                    cross-axis-alignment: center;
+                                    Text {
+                                        text: root.task-more-open ? "更多属性" : "更多属性  ·  清单、重复、标签和备注";
+                                        font-family: Typography.ui-font;
+                                        font-size: Typography.size-caption;
+                                        color: Colors.text-muted;
+                                        vertical-alignment: center;
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Icon {
+                                        width: 14px;
+                                        height: 14px;
+                                        name: root.task-more-open ? "chevron-down" : "chevron-right";
+                                        size: 14px;
+                                        color: Colors.text-muted;
                                     }
                                 }
-                            }
-
-                            HorizontalLayout {
-                                height: 32px;
-                                spacing: 8px;
-                                OrgField { name: "标签"; width: 40px; }
-                                OrgInput {
-                                    placeholder: "用逗号分隔";
-                                    value <=> UIState.org-task-tags-draft;
-                                    edited => { UIState.org-field-edited(6); }
+                                TouchArea {
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => { root.task-more-open = !root.task-more-open; }
                                 }
                             }
 
-                            OrgField { name: "备注"; height: 18px; }
-                            OrgInput {
-                                placeholder: "备注";
-                                multiline: true;
-                                hint-height: 84px;
-                                value <=> UIState.org-task-notes-draft;
-                                edited => { UIState.org-field-edited(5); }
+                            if root.task-more-open : VerticalLayout {
+                                spacing: 8px;
+
+                                HorizontalLayout {
+                                    height: 30px;
+                                    spacing: 8px;
+                                    OrgField { name: "清单"; width: 40px; }
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        border-radius: Theme.radius-sm;
+                                        border-width: 1px;
+                                        border-color: Colors.border;
+                                        HorizontalLayout {
+                                            padding-left: 3px;
+                                            padding-right: 3px;
+                                            spacing: 2px;
+                                            for entry[i] in UIState.task-list-rows : OrgButton {
+                                                label: entry.name;
+                                                color-slot: entry.smart ? -1 : entry.color;
+                                                font-size: Typography.size-caption;
+                                                selected: entry.smart
+                                                    ? UIState.org-task-detail.list <= 0
+                                                    : UIState.org-task-detail.list == entry.id;
+                                                clicked => {
+                                                    UIState.org-task-list-set(
+                                                        UIState.org-task-detail.id,
+                                                        entry.smart ? -1 : entry.id);
+                                                }
+                                            }
+                                            Rectangle { horizontal-stretch: 1; }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    height: 30px;
+                                    spacing: 8px;
+                                    OrgField { name: "重复"; width: 40px; }
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        border-radius: Theme.radius-sm;
+                                        border-width: 1px;
+                                        border-color: Colors.border;
+                                        HorizontalLayout {
+                                            padding-left: 3px;
+                                            padding-right: 3px;
+                                            spacing: 2px;
+                                            for name[i] in root.repeat-names : OrgButton {
+                                                label: name;
+                                                font-size: Typography.size-caption;
+                                                selected: UIState.org-task-detail.repeat == i;
+                                                clicked => {
+                                                    UIState.org-task-repeat-set(
+                                                        UIState.org-task-detail.id, i);
+                                                }
+                                            }
+                                            Rectangle { horizontal-stretch: 1; }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    height: 32px;
+                                    spacing: 8px;
+                                    OrgField { name: "标签"; width: 40px; }
+                                    OrgInput {
+                                        placeholder: "用空格分隔标签";
+                                        recessed: true;
+                                        value <=> UIState.org-task-tags-draft;
+                                        edited => { UIState.org-field-edited(6); }
+                                    }
+                                }
+
+                                OrgField { name: "备注"; height: 18px; }
+                                OrgInput {
+                                    placeholder: "备注";
+                                    multiline: true;
+                                    recessed: true;
+                                    hint-height: 84px;
+                                    value <=> UIState.org-task-notes-draft;
+                                    edited => { UIState.org-field-edited(5); }
+                                }
                             }
 
                             // the checklist: its own box, with the ＋ line
@@ -2593,7 +2767,7 @@ export component OrganizerArea inherits Rectangle {
                                         subs := ListView {
                                             vertical-stretch: 1;
                                             for sub[i] in UIState.org-task-detail.subtasks : Rectangle {
-                                                height: 28px;
+                                                height: 44px;
                                                 HorizontalLayout {
                                                     spacing: 8px;
                                                     cross-axis-alignment: center;
@@ -2621,13 +2795,15 @@ export component OrganizerArea inherits Rectangle {
                                                     if UIState.org-field != 7
                                                         || UIState.org-field-sub != sub.id : Text {
                                                         text: sub.title != "" ? sub.title : "子任务";
+                                                        horizontal-stretch: 1;
+                                                        max-width: 100000px;
                                                         font-family: Typography.ui-font;
                                                         font-size: Typography.size-ui;
                                                         color: sub.done
                                                             ? Colors.text-muted
                                                             : Colors.text-primary;
                                                         vertical-alignment: center;
-                                                        overflow: elide;
+                                                        wrap: word-wrap;
                                                     }
                                                     IconButton {
                                                         icon-name: "x";
@@ -2692,34 +2868,95 @@ export component OrganizerArea inherits Rectangle {
                             }
                         }
                     }
+                    }
                 }
 
-                // ── the nav column (任务 only, ADR-0118/0138) ────────────────
-                // The 笔记 half's tag column is the block above this one; this is
-                // the 任务 half's, and it is the only half that still has
-                // navigation of its own — 收集箱 / 今天 / 最近 7 天 / the lists
-                // *are* that half's navigation and there is nowhere else for them
-                // to be. The 笔记 tab's own 全部笔记 row and tag tree are in their
-                // own right-hand column rather than here, because the two halves'
-                // columns are never on screen together and the tabs themselves are
-                // the left sidebar's rows (ADR-0138).
-                if UIState.org-tab == 1 : Rectangle {
-                    // min *and* max, not `width`: in a layout an explicit width
-                    // is only the *preferred* one, and Slint raises it to
-                    // whatever the content says it needs. The detail column's
-                    // own content asked for 545 px, which is how a 340 px panel
-                    // took the width out of the list beside it.
-                    min-width: 208px;
-                    max-width: 208px;
-                    background: Colors.sidebar;
-                    // The card's right edge, because this column is the card's
-                    // last one: the tag sidebar sits on the *right* (ADR-0112),
-                    // which is the side the reference puts it on and the side a
-                    // right-handed pointer reaches without crossing the rows.
-                    border-top-right-radius: Theme.radius-lg;
-                    border-bottom-right-radius: Theme.radius-lg;
+                // Keep the note tag navigator on the far right whether the
+                // list or a selected note is showing. It follows the editor in
+                // this layout so opening a note never moves the navigator left.
+                if UIState.org-tab == 0 : Rectangle {
+                    preferred-width: 220px;
+                    min-width: 190px;
+                    max-width: 260px;
+                    vertical-stretch: 1;
+                    max-height: 100000px;
+                    background: Colors.surface;
+                    border-width: 1px;
+                    border-color: Colors.divider;
+                    clip: true;
+                    ScrollView {
+                        VerticalLayout {
+                            padding: 14px;
+                            spacing: 6px;
+                            Text {
+                                text: "标签";
+                                height: 22px;
+                                font-family: Typography.ui-font;
+                                font-size: Typography.size-caption;
+                                font-weight: Typography.weight-semibold;
+                                color: Colors.text-muted;
+                                vertical-alignment: center;
+                            }
+                            OrgTagColumn { }
+                            Rectangle { vertical-stretch: 1; min-height: 8px; }
+                            OrgNavRow {
+                                label: "回收站";
+                                count: UIState.org-bin-note-count;
+                                selected: UIState.org-bin-open;
+                                clicked => { UIState.org-bin-toggled(); }
+                            }
+                        }
+                    }
+                }
 
-                    VerticalLayout {
+            }
+
+
+        }
+    }
+
+
+    // Centered note composer for the list state. It is a page-level overlay so
+    // the ＋ works even when no note is selected; placing it in the note detail
+    // branch made the click update state without creating a visible card.
+    if UIState.org-tab == 0 && UIState.org-note-detail.id < 0
+        && UIState.org-capture-open && !UIState.quick-note-host : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.height;
+        background: Colors.scrim;
+        TouchArea { clicked => { UIState.org-capture-closed(); } }
+        NoteCaptureCard {
+            x: (parent.width - min(520px, parent.width - 40px)) / 2;
+            y: (parent.height - min(470px, parent.height - 48px)) / 2;
+            width: min(520px, parent.width - 40px);
+            height: min(470px, parent.height - 48px);
+            outlined: true;
+            draft <=> UIState.org-capture-draft;
+            caret: UIState.org-capture-caret;
+            suggestions: UIState.org-tag-suggestions;
+            submitted => { UIState.org-capture-sent(); }
+            dismissed => { UIState.org-capture-closed(); }
+            draft-edited => { UIState.org-capture-draft-changed(); }
+            suggestion-picked(tag) => { UIState.org-tag-suggest-picked(tag); }
+        }
+    }
+
+    filter-menu := PopupWindow {
+        x: 16px; y: 88px;
+        width: 292px;
+        height: min(620px, max(300px, UIState.window-h - 140px));
+        close-policy: PopupClosePolicy.close-on-click-outside;
+        Rectangle {
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: Colors.border;
+            background: Colors.surface-overlay;
+            ScrollView {
+                VerticalLayout {
+                    if UIState.org-tab == 1 : VerticalLayout {
+
                         padding: 10px;
                         spacing: 1px;
 
@@ -2744,11 +2981,6 @@ export component OrganizerArea inherits Rectangle {
                             // too many. 任务 keeps its own because a task has no
                             // capture layer — its quick-add line is already in the
                             // list, in the list the task lands in.
-                            if UIState.org-tab == 1 : IconButton {
-                                icon-name: "plus";
-                                size: 26px;
-                                clicked => { UIState.org-task-create(); }
-                            }
                         }
 
                         Rectangle { height: 6px; }
@@ -2786,7 +3018,7 @@ export component OrganizerArea inherits Rectangle {
                                 // second lit row would say otherwise.
                                 selected: UIState.org-list < 0 && UIState.org-view == i
                                     && !UIState.org-bin-open;
-                                clicked => { UIState.org-view-picked(i); }
+                                clicked => { UIState.org-view-picked(i); filter-menu.close(); }
                             }
                             Rectangle { height: 8px; }
                             Text {
@@ -2798,7 +3030,10 @@ export component OrganizerArea inherits Rectangle {
                                 vertical-alignment: center;
                                 x: 13px;
                             }
-                            for entry[i] in UIState.task-list-rows : OrgNavRow {
+                            for entry[i] in UIState.task-list-rows : Rectangle {
+                            height: entry.smart ? 0px : 32px;
+                            if !entry.smart : OrgNavRow {
+                                width: parent.width;
                                 label: entry.name;
                                 count: entry.count;
                                 color-slot: entry.smart ? -1 : entry.color;
@@ -2810,15 +3045,17 @@ export component OrganizerArea inherits Rectangle {
                                     ? UIState.org-list < 0 && UIState.org-view == 0
                                         && !UIState.org-bin-open
                                     : UIState.org-list == entry.id && !UIState.org-bin-open;
-                                clicked => { UIState.org-list-picked(entry.id); }
+                                clicked => { UIState.org-list-picked(entry.id); filter-menu.close(); }
                                 menu-requested(x, y) => {
-                                    UIState.org-list-menu-requested(entry.id, x, y);
+                                    filter-menu.close();
+                                    UIState.org-list-menu-requested(entry.id, x + root.absolute-position.x + 16px, y + root.absolute-position.y + 88px);
                                 }
                                 rename-committed(text) => {
                                     UIState.org-list-name-set(entry.id, text);
                                     UIState.org-list-renaming = -1;
                                 }
                                 rename-cancelled => { UIState.org-list-renaming = -1; }
+                            }
                             }
                             OrgNavRow {
                                 label: "＋ 新建清单";
@@ -2856,300 +3093,37 @@ export component OrganizerArea inherits Rectangle {
                                 && !UIState.org-bin-open;
                             clicked => { UIState.org-view-picked(4); }
                         }
+
                     }
                 }
-
-                // ── the 笔记 half's tag column (ADR-0138) ─────────────────────
-                // The tags, and only the tags, in the card's **last** column.
-                //
-                // ADR-0118 removed this column and moved the tag filter into the
-                // list header's chip row, on the reasoning that its two tabs were
-                // a second copy of the left sidebar's pinned rows. That was half
-                // right: the *tabs* really were a duplicate, and they are gone for
-                // good. But the column's other half — 标签 as a tree, with a
-                // `↑ 上级` row, a count per tag, and 反向筛选 on each — is not a
-                // duplicate of anything, and a chip row cannot hold it: a path is
-                // a hierarchy, and a hierarchy drawn as a horizontal strip of
-                // pills both scrolls (hiding half the tags) and loses the one
-                // level of context that says which path you are inside.
-                //
-                // It is on the **right** for the reason ADR-0112 gave: that is the
-                // side the reference puts it on, and the side a right-handed
-                // pointer reaches without crossing the rows it is filtering.
-                if UIState.org-tab == 0 : Rectangle {
-                    // min *and* max, for the nav column's own reason below: an
-                    // explicit `width` in a layout is only a preferred one, and
-                    // Slint raises it to whatever the content asks for.
-                    min-width: 208px;
-                    max-width: 208px;
-                    background: Colors.sidebar;
-                    // The card's right edge, because this is the card's last
-                    // column.
-                    border-top-right-radius: Theme.radius-lg;
-                    border-bottom-right-radius: Theme.radius-lg;
-
-                    VerticalLayout {
-                        padding: 10px;
-                        spacing: 1px;
-
-                        // 全部笔记: the way out of every tag, and the answer to
-                        // "show me everything" — the same row the 任务 half's
-                        // smart views carry, which is why it is drawn on both
-                        // halves rather than left implicit on one.
-                        OrgNavRow {
-                            label: "全部笔记";
-                            count: UIState.org-note-count;
-                            selected: UIState.org-tag == "" && !UIState.org-bin-open;
-                            clicked => { UIState.org-tag-picked(""); }
-                        }
-                        Rectangle { height: 10px; }
-                        // The shared tag tree, the same component the 任务 column
-                        // mounts: include (a path), exclude (the 减 on each row),
-                        // and 清除筛选 for both halves. One implementation, so
-                        // there is one set of rules about what a tag filter does.
-                        OrgTagColumn { }
-                        Rectangle { vertical-stretch: 1; min-height: 8px; }
-                    }
-                }
-
-                // the columns' own edge, drawn rather than bordered: a border
-                // would put a line on all four sides. It goes with the nav
-                // column it belongs to, on either half.
-                Rectangle { width: 1px; background: Colors.divider; }
             }
-
-            // ── the 笔记 half's note page, as a 浮层 (ADR-0118) ──────────────
-            // The note the user asked to open, drawn *over* the rows rather than
-            // beside them: the notes half's card is the rows' now. A docked column
-            // cost them a third of the card whether a note was open or not, and
-            // the row that opened the note is *context* — which note among which
-            // others — which is what the list behind this card still says.
-            //
-            // **Reached by right-click → 打开 / 详细信息, not by a click**
-            // (ADR-0137). A single click selects a row and stops there; the
-            // `id >= 0` gate below reads the *open* note, not the highlighted one,
-            // so pointing at a card cannot raise this card over it.
-            //
-            // Last among the card's children, so it sits above the list; the
-            // `TouchArea` inside it is what keeps a click on its own padding off
-            // the rows. ✕ and Escape close it.
-            if UIState.org-tab == 0 && UIState.org-note-detail.id >= 0 : Rectangle {
-                x: parent.width - self.width - 16px;
-                y: 16px;
-                width: min(420px, parent.width - 32px);
-                height: parent.height - 32px;
-
-                // the shadow plate, the way `ContextMenu` and the 悬浮 ＋ draw
-                // theirs: this renderer has no drop-shadow
-                Rectangle {
-                    x: 2px;
-                    y: 3px;
-                    width: parent.width;
-                    height: parent.height;
-                    border-radius: Theme.radius-lg;
-                    background: Colors.shadow;
-                }
-                Rectangle {
-                    width: parent.width;
-                    height: parent.height;
-                    border-radius: Theme.radius-lg;
-                    border-width: 0px;
-                    background: Colors.surface-overlay;
-                    clip: true;
-
-                    // Swallows the card's own clicks — its padding, its title, the
-                    // space under the last field — so that the rows beside it stay
-                    // clickable and its own margin is not a hole onto them.
-                    // Declared first, so every control below sits above it.
-                    TouchArea { mouse-cursor: MouseCursor.pointer; }
-
-                    // The fields are a column taller than the card can be, so the
-                    // page scrolls rather than clipping 详细信息 off the bottom.
-                    ScrollView {
-                        VerticalLayout {
-                            padding: 16px;
-                            spacing: 10px;
-
-                            HorizontalLayout {
-                                height: 34px;
-                                spacing: 8px;
-                                OrgInput {
-                                    placeholder: "标题";
-                                    font-size: Typography.size-ui-lg;
-                                    value <=> UIState.org-note-title-draft;
-                                    edited => { UIState.org-field-edited(1); }
-                                }
-                                IconButton {
-                                    icon-name: "star";
-                                    icon-color: UIState.org-note-detail.pinned
-                                        ? Colors.accent-text
-                                        : Colors.text-muted;
-                                    clicked => { UIState.org-note-pin-toggled(UIState.org-note-detail.id); }
-                                }
-                                // 转为待办: the note becomes a task and the note goes —
-                                // no dialog, because the notice band is the way back.
-                                IconButton {
-                                    icon-name: "todo-check";
-                                    icon-color: Colors.text-muted;
-                                    hover-color: Colors.accent-text;
-                                    clicked => { UIState.org-note-to-task(UIState.org-note-detail.id); }
-                                }
-                                IconButton {
-                                    icon-name: "trash";
-                                    icon-color: Colors.text-muted;
-                                    hover-color: Colors.danger;
-                                    clicked => { UIState.org-note-deleted(UIState.org-note-detail.id); }
-                                }
-                                // The panel's own door, in the corner every popup in
-                                // this window closes from. Escape is the same ask.
-                                IconButton {
-                                    icon-name: "x";
-                                    icon-color: Colors.text-muted;
-                                    clicked => { UIState.org-note-closed(); }
-                                }
-                            }
-
-                            HorizontalLayout {
-                                height: 30px;
-                                spacing: 8px;
-                                OrgField { name: "标签"; width: 40px; }
-                                OrgInput {
-                                    placeholder: "用逗号分隔";
-                                    value <=> UIState.org-note-tags-draft;
-                                    edited => { UIState.org-field-edited(3); }
-                                }
-                            }
-
-                            OrgInput {
-                                placeholder: "正文";
-                                multiline: true;
-                                hint-height: 300px;
-                                value <=> UIState.org-note-body-draft;
-                                edited => { UIState.org-field-edited(2); }
-                            }
-
-                            // 引用 (SPEC §四十一): the notes that answer this one, and
-                            // the field that writes them — a reply is a note whose
-                            // `ref_note` names this one (core ADR-0001). Committed on
-                            // Enter or the 评论 button and not on a settle, because a
-                            // reply is a *create* and half a row is not a row.
-                            VerticalLayout {
-                                spacing: 4px;
-                                OrgField {
-                                    name: "评论 " + UIState.org-note-replies.length;
-                                    height: 18px;
-                                }
-                                HorizontalLayout {
-                                    height: 30px;
-                                    spacing: 8px;
-                                    OrgInput {
-                                        placeholder: "写一条评论…";
-                                        value <=> UIState.org-reply-draft;
-                                        accepted => { UIState.org-reply-submitted(); }
-                                    }
-                                    OrgButton {
-                                        label: "评论";
-                                        accent: true;
-                                        font-size: Typography.size-caption;
-                                        clicked => { UIState.org-reply-submitted(); }
-                                    }
-                                }
-                                for reply[i] in UIState.org-note-replies : Rectangle {
-                                    // The card hugs its text, the board card's own
-                                    // idiom (`height` off the wrapped text's
-                                    // preferred-height): a reply is a line or two, and
-                                    // the card's leftover height must not be poured
-                                    // into the newest one.
-                                    height: reply-text.preferred-height + 14px + 18px;
-                                    background: Colors.hover-fill;
-                                    border-radius: Theme.radius-sm;
-                                    VerticalLayout {
-                                        padding: 8px;
-                                        spacing: 2px;
-                                        reply-text := Text {
-                                            text: reply.body != "" ? reply.body : reply.title;
-                                            font-family: Typography.ui-font;
-                                            font-size: Typography.size-ui;
-                                            color: Colors.text-primary;
-                                            wrap: word-wrap;
-                                        }
-                                        OrgMeta { tags: reply.tags; when: reply.when; height: 14px; }
-                                    }
-                                }
-                            }
-
-                            // 详细信息: what the store holds about this note, and
-                            // the one thing it does not hold.
-                            //
-                            // A disclosure **below** the body rather than the
-                            // reference's bottom sheet, for two reasons. Slint has
-                            // no sheet, and a popup window for six read-only rows
-                            // is a window inside a window; and opening it must not
-                            // move the field the user is typing into — above the
-                            // body it would shove 正文 down every time.
-                            //
-                            // The header is a Rectangle with a TouchArea under its
-                            // text: a layout child that is only a row of text has
-                            // nothing to click on for the empty part of the card.
-                            Rectangle {
-                                height: 24px;
-                                details-ta := TouchArea {
-                                    mouse-cursor: MouseCursor.pointer;
-                                    clicked => {
-                                        UIState.org-note-details-open = !UIState.org-note-details-open;
-                                    }
-                                }
-                                HorizontalLayout {
-                                    spacing: 6px;
-                                    cross-axis-alignment: center;
-                                    Icon {
-                                        width: 14px;
-                                        height: 14px;
-                                        name: UIState.org-note-details-open
-                                            ? "chevron-down"
-                                            : "chevron-right";
-                                        size: 14px;
-                                        color: Colors.text-muted;
-                                    }
-                                    Text {
-                                        text: "详细信息";
-                                        font-family: Typography.ui-font;
-                                        font-size: Typography.size-caption;
-                                        color: Colors.text-muted;
-                                        vertical-alignment: center;
-                                    }
-                                }
-                            }
-
-                            if UIState.org-note-details-open : VerticalLayout {
-                                spacing: 2px;
-                                OrgDetailRow { label: "编号"; value: UIState.org-note-details.id; }
-                                // SPEC §四十一's 唯一 ID: what 复制 hands an AI and
-                                // what a batch instruction names this note by. Next to
-                                // 编号 because they are both "which note", and only one
-                                // of them survives a sync.
-                                OrgDetailRow { label: "唯一 ID"; value: UIState.org-note-details.uuid; }
-                                OrgDetailRow { label: "创建"; value: UIState.org-note-details.created; }
-                                OrgDetailRow { label: "修改"; value: UIState.org-note-details.edited; }
-                                OrgDetailRow { label: "标签"; value: UIState.org-note-details.tags; }
-                                OrgDetailRow { label: "长度"; value: UIState.org-note-details.length; }
-                                OrgDetailRow { label: "置顶"; value: UIState.org-note-details.pinned; }
-                                // The reference says this out loud instead of
-                                // painting an empty 历史 list: `quire-core` keeps
-                                // one copy of a note, so there is no version to
-                                // restore to — 撤销 walks an edit back, and that
-                                // is all there is.
-                                Text {
-                                    text: "没有历史版本：资料库只保存当前这一份，撤销可以回退编辑，但没有按时间恢复的版本。";
-                                    wrap: word-wrap;
-                                    font-family: Typography.ui-font;
-                                    font-size: Typography.size-caption;
-                                    color: Colors.text-muted;
-                                }
-                            }
-                        }
-                    }
-                }
+        }
+    }
+    // Floating create action belongs to the active organizer page, at the
+    // lower-right with a consistent inset from both edges.
+    if UIState.org-tab == 0 || UIState.org-tab == 1 : Rectangle {
+        x: root.width - 72px;
+        y: root.height - 72px;
+        width: 52px;
+        height: 52px;
+        border-radius: 26px;
+        background: Colors.accent;
+        border-width: 1px;
+        border-color: Colors.accent;
+        Icon {
+            name: "plus";
+            size: 22px;
+            width: 22px;
+            height: 22px;
+            color: Colors.text-on-accent;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+        }
+        TouchArea {
+            mouse-cursor: MouseCursor.pointer;
+            clicked => {
+                if UIState.org-tab == 0 { UIState.org-capture-opened(); }
+                else { UIState.org-task-create(); }
             }
         }
     }
@@ -3288,61 +3262,5 @@ export component OrganizerArea inherits Rectangle {
         }
     }
 
-    // ── the capture layer (ADR-0115), hosted here by the 悬浮 ＋ ───────────────
-    // The scrim, the centred placement, and the dismissal — `NoteCaptureCard`
-    // draws what is inside this frame, and Alt+N draws the same card in a window
-    // of its own (ADR-0145). The two hosts are told apart by `quick-note-host`,
-    // because they share one draft: a composer that appeared twice over the same
-    // words would be two notes by the time the first one was saved.
-    //
-    // **Nothing is written until 保存.** The draft is a property and the layer is
-    // a mode, so closing it — by ✕, 取消, Escape, or a click on the scrim —
-    // throws away a half-written note and leaves the file, the catalog and the
-    // undo stack exactly where they were. That is the reference's own rule and
-    // the Android copy's (ADR-0015 there), and it is why this is not a new blank
-    // row: a row that exists because a ＋ was pressed is a row every count and
-    // every rebuild has to carry until someone decides to delete it.
-    //
-    // An overlay inside the area rather than a window popup, for the reason 指令's
-    // card is one: what it acts on is *these* rows. Its `TouchArea` is what makes
-    // the three columns behind it unclickable while a note is being written.
-    if UIState.org-capture-open && !UIState.quick-note-host : Rectangle {
-        width: parent.width;
-        height: parent.height;
-        background: Colors.scrim;
 
-        // The scrim is the dismissal. A sibling *under* the card rather than a
-        // wrapper, so a click in the field never reaches it — a tap anywhere
-        // outside the card closes the layer, which is what the reference shell
-        // does with a swipe down and with its back gesture.
-        TouchArea {
-            mouse-cursor: MouseCursor.pointer;
-            clicked => { UIState.org-capture-closed(); }
-        }
-
-        // Centred, the reference dialog's own placement (560 × 320 on its
-        // screen's available area) — a composer at the window's middle is a
-        // composer the eye is already at, and the scrim carries the "this is
-        // the only thing happening" that its dialog's modality did.
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(parent.width - 80px, 560px);
-            height: min(parent.height - 60px, 340px);
-            // This host *does* read and write the shared `UIState`, so the
-            // injection is a straight pass-through: same draft, same tray, same
-            // four verdicts as before. The card takes them as properties rather
-            // than reading the global itself because 速记 cannot — its window
-            // carries a second, independent set of globals (see `NoteCaptureCard`).
-            NoteCaptureCard {
-                draft <=> UIState.org-capture-draft;
-                caret: UIState.org-capture-caret;
-                suggestions: UIState.org-tag-suggestions;
-                submitted => { UIState.org-capture-sent(); }
-                dismissed => { UIState.org-capture-closed(); }
-                draft-edited => { UIState.org-capture-draft-changed(); }
-                suggestion-picked(tag) => { UIState.org-tag-suggest-picked(tag); }
-            }
-        }
-    }
 }

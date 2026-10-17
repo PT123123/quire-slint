@@ -1,4 +1,4 @@
-// Settings popup: five tabs (外观 / 通用 / 同步 / 快捷键 / 关于) over one
+// Settings page: six tabs (外观 / 通用 / 同步 / MCP / 快捷键 / 关于) over one
 // searchable card. Real settings persistence arrives with SQLite in M3.
 //
 // The search field at the top filters the card live: what was typed narrows
@@ -287,6 +287,8 @@ component SettingsTabs inherits Rectangle {
     in property <int> selected;
     callback picked(int);
 
+    width: 100%;
+    horizontal-stretch: 1;
     height: 30px;
     border-radius: Theme.radius-sm;
     border-width: 1px;
@@ -296,6 +298,7 @@ component SettingsTabs inherits Rectangle {
 
     HorizontalLayout {
         for entry[i] in ["外观", "通用", "同步", "MCP", "快捷键", "关于"] : Rectangle {
+            width: parent.width / 6;
             // A selected box is a **state**, not an emphasis, for ADR-0118's
             // reason: `surface-selected` is a 22%-accent mix — a saturated
             // plate. A raised surface with the label in the primary colour says
@@ -316,70 +319,28 @@ component SettingsTabs inherits Rectangle {
                 mouse-cursor: MouseCursor.pointer;
                 clicked => { root.picked(i); }
             }
+            if i > 0 : Rectangle {
+                x: 0;
+                y: 7px;
+                width: 1px;
+                height: parent.height - 14px;
+                background: Colors.border-strong;
+            }
         }
     }
 }
 
-export component SettingsDialog inherits PopupWindow {
-    // 560 px rather than the 400 it used to be: the 同步 tab moved back in
-    // (ADR-0132's destination, retired as a page) and a device row with its
-    // two verbs needs the room. The theme cards fit four across at this width.
-    width: 560px;
-    // The card grows with its sections but never past the window it is drawn
-    // in: a dialog whose bottom rows are off-screen has no way back — so the
-    // content scrolls instead (see the Flickable).
-    height: Math.min(
-        content-col.preferred-height + Theme.spacing-lg * 2,
-        Math.max(UIState.window-h - 80px, 320px)
-    );
-    // Dismissed like every other popup in the window: a click outside it closes
-    // it (Escape is the focus-proxy below). It used to be `no-auto-close`, so the
-    // engine swallowed the outside click *and* the dialog ignored it — the card
-    // stayed up over a page the user had already clicked into, and only 完成 or
-    // Escape got rid of it. The `is-open` mirror in `AppWindow` carries the
-    // dismissal back to `UIState`.
-    close-policy: PopupClosePolicy.close-on-click-outside;
-
-    property <bool> opened: UIState.settings-open;
-    changed opened => {
-        if (UIState.settings-open) {
-            // the search field takes the first focus: it is the one input the
-            // dialog exists to serve now
-            search-input.focus();
-        }
-    }
-
-    focus-proxy := TextInput {
-        x: 0; y: 0;
-        width: 0px; height: 0px;
-        key-pressed(event) => {
-            if (event.text == Key.Escape) {
-                UIState.settings-close-requested();
-                accept
-            } else {
-                reject
-            }
-        }
-    }
-
+export component SettingsDialog inherits Rectangle {
+    width: 100%;
+    height: 100%;
     Rectangle {
         width: parent.width;
         height: parent.height;
 
         Rectangle {
-            x: 2px; y: 3px;
-            width: parent.width - 4px;
-            height: parent.height - 5px;
-            border-radius: Theme.radius-lg + 2px;
-            background: Colors.shadow;
-        }
-        Rectangle {
             width: parent.width;
             height: parent.height;
-            border-radius: Theme.radius-lg;
-            background: Colors.surface-overlay;
-            border-width: 1px;
-            border-color: Colors.border;
+            background: Colors.page;
         }
 
         Flickable {
@@ -388,9 +349,11 @@ export component SettingsDialog inherits PopupWindow {
             content-height: content-col.preferred-height;
 
             content-col := VerticalLayout {
-                x: 0; y: 0;
-                width: parent.width;
-                padding: Theme.spacing-lg;
+                x: Theme.spacing-xl;
+                y: Theme.spacing-xl;
+                width: parent.width - Theme.spacing-lg * 2;
+                max-width: parent.width - Theme.spacing-lg * 2;
+                padding: Theme.spacing-md;
                 spacing: Theme.spacing-md;
 
                 Text {

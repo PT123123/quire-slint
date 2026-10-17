@@ -10,8 +10,8 @@
 #
 # The version is in the file's own name, not only in the folder's, because the
 # file leaves the folder: it gets copied out, opened in a properties tab, sent to
-# someone. `quire.exe` says nothing about which build it is once it is beside
-# another `quire.exe`, and the FileVersion resource is one dialog away rather
+# someone. A generic `quire.exe` says nothing about which renderer build it is
+# once it is beside another `quire.exe`, and FileVersion is one dialog away rather
 # than in the shell's own listing.
 #
 # The name is `quire-slint`, not the manifest's `quire`: the workshop is where
@@ -36,7 +36,7 @@
 #   1. [package] version's patch +1 in Cargo.toml. The folder is named after the
 #      version, so this is what makes a deploy *land*: without it the archive
 #      would be rewritten by the same build.
-#   2. `cargo build --release --bin quire`. The bump has to come first for more
+#   2. `cargo build --release --bin quire-slint`. The bump has to come first for more
 #      than the folder name: build.rs generates the exe's version resource block from
 #      CARGO_PKG_VERSION — the number the file properties tab shows — so a build
 #      that runs before the bump carries the old version. That is why the build
@@ -44,7 +44,7 @@
 #   3. The bump is committed (Cargo.toml + Cargo.lock, nothing else) and pushed,
 #      the way every repository in this workspace is left: the commit is the
 #      record of what each folder in the workshop was built from.
-#   4. target\release\quire.exe is copied into the version folder under the
+#   4. target\release\quire-slint.exe is copied into the version folder under the
 #      versioned name, so the file carries the number the folder is named for.
 #
 # One rule for the text below: every character inside a Write-Output or a throw
@@ -94,10 +94,10 @@ Write-Output "==> version -> $version"
 # that ships. This is the slow step (~2m30s) and it is one crate: the bump
 # invalidated `quire` itself, which is where codegen-units = 1 + thin LTO spends
 # its time (ADR-0024's update, PERFORMANCE.md "Build cost").
-cargo build --release --bin quire
+cargo build --release --bin quire-slint
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$exe = Join-Path $root 'target\release\quire.exe'
+$exe = Join-Path $root 'target\release\quire-slint.exe'
 if (-not (Test-Path $exe)) { throw "no exe at $exe; the build reported success but left nothing" }
 
 # The exe is asked to confirm it took the bump, because it is the artifact that

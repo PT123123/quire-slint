@@ -44,7 +44,7 @@ if (Test-Path $Dir) { throw "$Dir already exists; pass a different -Dir" }
 New-Item -ItemType Directory -Force -Path $data | Out-Null
 
 # The release exe is the input; build it first (cargo build --release --bin
-# quire). build-installer.ps1 -SkipBuild compiles the .iss against it.
+# quire-slint). build-installer.ps1 -SkipBuild compiles the .iss against it.
 & (Join-Path $PSScriptRoot "build-installer.ps1") -SkipBuild
 if ($LASTEXITCODE -ne 0) { throw "installer build failed" }
 $setup = Get-ChildItem "dist\Quire-*-windows-x64-setup.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -56,7 +56,7 @@ $p = Start-Process -FilePath $setup.FullName -PassThru -Wait -ArgumentList @(
     "/VERYSILENT", "/NORESTART", "/SUPPRESSMSGBOXES", "/DIR=$Dir", "/TASKS=assocmd")
 Write-Output "install exit: $($p.ExitCode)"
 $missing = @()
-foreach ($f in @("quire.exe", "README.md", "unins000.exe")) {
+foreach ($f in @("quire-slint.exe", "README.md", "unins000.exe")) {
     $ok = Test-Path (Join-Path $Dir $f)
     Write-Output ("  payload {0,-14} {1}" -f $f, $ok)
     if (-not $ok) { $missing += $f }
@@ -68,7 +68,7 @@ if (-not $gone) { throw "quire.png still ships after being dropped from [Files]"
 
 # ---- (a) the installed binary runs -----------------------------------------
 $err = Join-Path $data "launch.err"
-$p = Start-Process -FilePath (Join-Path $Dir "quire.exe") -PassThru -Wait -RedirectStandardError $err -ArgumentList @(
+$p = Start-Process -FilePath (Join-Path $Dir "quire-slint.exe") -PassThru -Wait -RedirectStandardError $err -ArgumentList @(
     "--db", (Join-Path $data "quire.db"), "--auto-exit", "3")
 Write-Output "(a) installed exe exit: $($p.ExitCode), stderr lines: $((Get-Content $err -ErrorAction SilentlyContinue | Measure-Object).Count)"
 Write-Output ("(a) scratch library written: " + ((Get-ChildItem $data -Filter "quire.*" | ForEach-Object Name) -join " "))
@@ -87,12 +87,12 @@ function Get-IconSig($path) {
     $bmp.Dispose(); $icon.Dispose()
     $sb.ToString()
 }
-$exeSig = Get-IconSig (Join-Path $Dir "quire.exe")
+$exeSig = Get-IconSig (Join-Path $Dir "quire-slint.exe")
 $icoSig = Get-IconSig (Join-Path $PSScriptRoot "quire.ico")
-$exeInfo = (Get-Item (Join-Path $Dir "quire.exe")).VersionInfo
+$exeInfo = (Get-Item (Join-Path $Dir "quire-slint.exe")).VersionInfo
 Write-Output ("(b) exe version resource: {0} / {1}" -f $exeInfo.ProductName, $exeInfo.FileVersion)
 Write-Output ("(b) embedded icon matches install\quire.ico: {0} ({1} px sample)" -f ($exeSig -eq $icoSig), $exeSig.Length)
-Write-Output ("(b) payload is the built exe: {0}" -f ((Get-FileHash (Join-Path $Dir "quire.exe")).Hash -eq (Get-FileHash "target\release\quire.exe").Hash))
+Write-Output ("(b) payload is the built exe: {0}" -f ((Get-FileHash (Join-Path $Dir "quire-slint.exe")).Hash -eq (Get-FileHash "target\release\quire-slint.exe").Hash))
 
 # ---- (c) the .md association -----------------------------------------------
 $progids = Get-Item "HKCU:\Software\Classes\.md\OpenWithProgids"
@@ -113,7 +113,7 @@ function Get-PageCount([string[]]$extra) {
     $script:dumpN++
     $dump = Join-Path $data "dump-$($script:dumpN).err"
     $a = @("--db", (Join-Path $data "quire.db"), "--auto-exit", "3", "--dump-state") + $extra
-    Start-Process -FilePath (Join-Path $Dir "quire.exe") -ArgumentList $a -Wait -RedirectStandardError $dump | Out-Null
+    Start-Process -FilePath (Join-Path $Dir "quire-slint.exe") -ArgumentList $a -Wait -RedirectStandardError $dump | Out-Null
     $l = (Get-Content $dump -ErrorAction SilentlyContinue | Where-Object { $_ -like "dump-state: pages=*" } | Select-Object -Last 1)
     if ($l -match "pages=(\d+)") { return [int]$Matches[1] }
     return -1

@@ -158,14 +158,14 @@ export component NoteCaptureCard inherits Rectangle {
                 // that says *this card is Quire's*, in the colour the theme
                 // already owns rather than in a glyph no theme can argue with.
                 Rectangle {
-                    width: 2px;
+                    width: 1px;
                     height: parent.height;
                     Rectangle {
                         x: 0;
                         y: (parent.height - 12px) / 2;
-                        width: 2px;
+                        width: 1px;
                         height: 12px;
-                        border-radius: 1px;
+                        border-radius: 0.5px;
                         background: @linear-gradient(180deg,
                             Colors.accent,
                             Colors.accent.mix(Colors.p.grad2, 0.55));
@@ -216,23 +216,10 @@ export component NoteCaptureCard inherits Rectangle {
         Rectangle {
             vertical-stretch: 1;
             min-height: 56px;
-            // The focus ring, *outside* the well: a border that only thickens
-            // would move the text it is drawing around. Nothing clips it, so the
-            // glow sits in the card's own padding.
-            Rectangle {
-                x: -2px;
-                y: -2px;
-                width: parent.width + 4px;
-                height: parent.height + 4px;
-                border-radius: Theme.radius-md + 2px;
-                border-width: 1px;
-                border-color: capture-input.has-focus
-                    ? Colors.accent.mix(transparent, 0.62) : transparent;
-                animate border-color { duration: Theme.duration-fast; }
-            }
             border-radius: Theme.radius-md;
             border-width: 1px;
-            border-color: capture-input.has-focus ? Colors.accent : Colors.border;
+            border-color: capture-input.has-focus
+                ? Colors.accent.with-alpha(0.42) : Colors.border;
             // One step *below* the card rather than the same colour as it: the
             // field is where the words go, and a well you can see the depth of is
             // a well you know to type into.

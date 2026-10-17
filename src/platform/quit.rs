@@ -34,7 +34,7 @@
 // going to exit" from "nothing was listening", and a caller that gets no answer
 // must not assume the app is going away.
 //
-// `quire.exe --quit` is the client half and runs before any session starts: no
+// `quire-slint.exe --quit` is the client half and runs before any session starts: no
 // log line, no database, no window, no event loop.
 
 use std::io::{BufRead, BufReader, Write};

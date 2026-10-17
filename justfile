@@ -6,11 +6,11 @@ default:
 
 # daily build: dev profile, incremental, only the application binary
 build:
-    cargo build --bin quire
+    cargo build --bin quire-slint
 
 # release build (default FemtoVG renderer; use for packaging and deployment)
 release-build:
-    cargo build --release --bin quire
+    cargo build --release --bin quire-slint
 
 # run in debug; pass cargo flags as one quoted string
 # e.g. just run "--no-default-features --features skia"
@@ -67,7 +67,7 @@ clips:
 
 # package the release exe into a zip (M8-lite; installer comes later)
 dist:
-    cargo build --release --bin quire
+    cargo build --release --bin quire-slint
     powershell -NoProfile -ExecutionPolicy Bypass -File benchmarks\scripts\dist.ps1
 
 # deploy a release into the workshop's archive: one folder per release,

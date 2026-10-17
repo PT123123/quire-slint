@@ -25,8 +25,8 @@ $matrix = Join-Path $env:TEMP "quire-scrollab"
 if (-not (Test-Path $matrix)) { New-Item -ItemType Directory -Path $matrix | Out-Null }
 
 $arms = @(
-    @{ label = "vg";   exe = (Join-Path $root "target\release\quire.exe");          want = "femtovg" },
-    @{ label = "skgl"; exe = (Join-Path $root "target-skia\release\quire.exe");     want = "skia" }
+    @{ label = "vg";   exe = (Join-Path $root "target\release\quire-slint.exe");          want = "femtovg" },
+    @{ label = "skgl"; exe = (Join-Path $root "target-skia\release\quire-slint.exe");     want = "skia" }
 )
 
 foreach ($arm in $arms) {

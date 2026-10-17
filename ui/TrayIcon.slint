@@ -12,12 +12,14 @@
 // draws it, so nothing here styles it. The entries are the only two things the
 // tray can do — bring the window back, or end the session.
 
+import { UIState } from "Types.slint";
+
 export component AppTray inherits SystemTrayIcon {
     // The one master artwork, rasterised by `install/make_icon.ps1`; the shell
     // scales it down to the notification area's own icon size. Transparent
     // background, like the exe icon — the taskbar paints its own tile behind it.
     icon: @image-url("../install/quire.png");
-    in property <string> app-label: "quire-slint";
+    in property <string> app-label: "quire-slint-" + UIState.app-version;
     tooltip: app-label;
     // Linux/BSD use this for accessibility and overflow menus; Windows draws
     // only the icon, so it is inert there.

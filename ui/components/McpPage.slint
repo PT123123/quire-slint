@@ -92,6 +92,8 @@ component McpSwitch inherits Rectangle {
 component ConfigBox inherits Rectangle {
     in property <string> body;
 
+    width: 100%;
+    horizontal-stretch: 1;
     border-radius: Theme.radius-sm;
     border-width: 1px;
     border-color: Colors.border;

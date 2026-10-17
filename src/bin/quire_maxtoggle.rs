@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use quire::app::controller;
 use quire::app::state::{AppState, HandleArgs};
 use quire::storage::SqliteRepository;
-use quire::AppWindow;
+use quire::{AppWindow, UIState};
 use slint::{ComponentHandle, Timer, TimerMode};
 
 struct Args {
@@ -88,17 +88,7 @@ fn run() -> Result<(), String> {
     controller::wire(&ui, &state);
     ui.show().map_err(|e| e.to_string())?;
 
-    let w = ui.window();
-    let size = w.size();
-    eprintln!(
-        "start: zoom={} base_scale={} window_scale={:.3} physical=({}x{}) maximized={}",
-        state.zoom(),
-        state.base_scale(),
-        w.scale_factor(),
-        size.width,
-        size.height,
-        w.is_maximized(),
-    );
+    log_window_state(&ui, "start");
 
     let ui_w = ui.as_weak();
     let done = Rc::new(Cell::new(0usize));
@@ -122,20 +112,29 @@ fn run() -> Result<(), String> {
             let i = done_tick.get() + 1;
             done_tick.set(i);
             let started = Instant::now();
-            let to = !ui.window().is_maximized();
-            eprintln!("toggle {i}/{toggles} -> maximized={to}");
-            ui.window().set_maximized(to);
+            let before = ui.window().is_maximized();
+            eprintln!("toggle {i}/{toggles}: native before={before}");
+            // Exercise the same callback path as the title-bar button. It must
+            // use live native state rather than the UI mirror, which can lag.
+            ui.global::<UIState>().invoke_window_maximize_requested();
             let took = started.elapsed();
-            let scale = ui.window().scale_factor();
-            let size = ui.window().size();
-            eprintln!(
-                "toggle {i} done in {took:?} scale={scale:.3} logical=({:.0},{:.0})",
-                size.width as f32 / scale,
-                size.height as f32 / scale,
-            );
+            log_window_state(&ui, &format!("toggle {i} immediate ({took:?})"));
+            let delayed = ui.as_weak();
+            Timer::single_shot(Duration::from_millis(350), move || {
+                if let Some(ui) = delayed.upgrade() {
+                    log_window_state(&ui, &format!("toggle {i} settled"));
+                }
+            });
             if i >= toggles {
-                eprintln!("all {toggles} toggles done, quitting");
-                let _ = slint::quit_event_loop();
+                t.stop();
+                let delayed = ui.as_weak();
+                Timer::single_shot(Duration::from_secs(5), move || {
+                    if let Some(ui) = delayed.upgrade() {
+                        log_window_state(&ui, "final after 5s");
+                    }
+                    eprintln!("all {toggles} toggles done, quitting");
+                    let _ = slint::quit_event_loop();
+                });
             }
         });
     });
@@ -144,4 +143,22 @@ fn run() -> Result<(), String> {
     ui.run().map_err(|e| e.to_string())?;
     eprintln!("event loop ended cleanly");
     Ok(())
+}
+
+fn log_window_state(ui: &AppWindow, label: &str) {
+    let window = ui.window();
+    let physical = window.size();
+    let scale = window.scale_factor();
+    let global = ui.global::<UIState>();
+    eprintln!(
+        "{label}: native={} mirror={} physical=({}x{}) logical=({:.0}x{:.0}) root=({:.0}x{:.0})",
+        window.is_maximized(),
+        global.get_window_maximized(),
+        physical.width,
+        physical.height,
+        physical.width as f32 / scale,
+        physical.height as f32 / scale,
+        global.get_window_w(),
+        global.get_window_h(),
+    );
 }

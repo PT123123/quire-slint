@@ -524,7 +524,7 @@ export { UIState, SidebarNode, BlockRow, TextRun, CommandRow, SearchRow, MenuRow
 export { AppTray } from "TrayIcon.slint";
 
 export component AppWindow inherits Window {
-    title: "quire-slint-" + UIState.app-version;
+    title: "Quire";
     preferred-width: 1280px;
     preferred-height: 800px;
     min-width: 940px;
@@ -537,18 +537,13 @@ export component AppWindow inherits Window {
     // opens with, and `ramp` paints the gradient over it.
     background: Colors.background;
 
-    // Frameless: TopBar provides the move area and window controls.
-    no-frame: true;
-    resize-border-width: 6px;
+    // Keep the operating system's native frame, title bar, and window controls.
+    no-frame: false;
     forward-focus: shortcuts;
 
-    // 最大化 / 窗口化, told twice and for two different readers. The title bar
-    // needs the flag to draw 「还原」 instead of 「最大化」 — a window control
-    // that cannot say which way it goes is a control the user has to try. Rust
-    // needs it because the size a maximized window reports is the *monitor's*
-    // size, and recording that is how a maximized session used to come back
-    // as a full-screen window on the next launch: the flag is the only moment
-    // at which the title bar can read the state and draw the right action.
+    // Mirror maximized state into UIState for Rust's geometry persistence. A
+    // maximized window reports the monitor's size; recording that as the normal
+    // window size would make the next launch reopen at full-screen dimensions.
     changed maximized => {
         UIState.window-maximized = self.maximized;
     }
@@ -752,14 +747,6 @@ export component AppWindow inherits Window {
         }
     }
 
-    changed settings-open => {
-        if (settings-open) {
-            settings.show();
-        } else {
-            settings.close();
-        }
-    }
-
     changed icon-picker-open => {
         if (icon-picker-open) {
             iconPicker.show();
@@ -830,17 +817,6 @@ export component AppWindow inherits Window {
             UIState.icon-picker-page = -1;
         }
     }
-    // 设置 is a card over the page, so an outside click has to dismiss it like
-    // any other popup: the engine eats that click (so `AppShell`'s scrim never
-    // sees it) and closes the popup itself, and this mirror is the only way
-    // `settings-open` — and the Rust layer behind it — learns.
-    property <bool> settings-shown: settings.is-open;
-    changed settings-shown => {
-        if (!settings-shown && UIState.settings-open) {
-            UIState.settings-open = false;
-        }
-    }
-
     // geometry mirror for Rust-side popup anchoring
     changed width => {
         UIState.window-w = self.width;
@@ -852,6 +828,10 @@ export component AppWindow inherits Window {
     }
 
     shortcuts := FocusScope {
+        // This viewport must not contribute content layout constraints to the
+        // native window. Task details change those constraints when mounted.
+        x: 0px;
+        y: 0px;
         width: root.width;
         height: root.height;
 
@@ -988,15 +968,12 @@ export component AppWindow inherits Window {
         // never referenced.)
 
         AppShell {
-            minimize-requested => {
-                root.minimized = true;
-            }
-            maximize-requested => {
-                root.maximized = !root.maximized;
-            }
-            close-requested => {
-                root.close();
-            }
+            // Task selection swaps the organizer's detail content and can
+            // change its layout's implicit size. Keep that content reflow from
+            // feeding a new size back into the native window: the shell always
+            // occupies the client area after maximize, snap, or resize.
+            width: root.width;
+            height: root.height;
         }
     }
 
@@ -1073,11 +1050,6 @@ export component AppWindow inherits Window {
     }
 
     dialog := ConfirmDialog {
-        x: (root.width - self.width) / 2;
-        y: (root.height - self.height) / 2;
-    }
-
-    settings := SettingsDialog {
         x: (root.width - self.width) / 2;
         y: (root.height - self.height) / 2;
     }

@@ -1,29 +1,24 @@
-// Composition of the whole window body: title bar on top, sidebar + editor
-// below, plus the scrim behind overlays and the delete's 撤销 bar. No business
+// Composition of the client area below the native OS title bar: sidebar +
+// editor, plus the scrim behind overlays and the delete's 撤销 bar. No business
 // logic here — state flows through the UIState global, actions flow to the Rust
 // controller.
 
 import { Theme } from "../Theme.slint";
 import { Colors } from "../Colors.slint";
 import { Typography } from "../Typography.slint";
-import { TopBar } from "./TopBar.slint";
 import { IconButton } from "./IconButton.slint";
 import { Sidebar } from "./Sidebar.slint";
 import { Editor } from "./Editor.slint";
 import { OrganizerArea } from "./OrganizerArea.slint";
+import { SettingsDialog } from "./SettingsDialog.slint";
 import { Button } from "./Button.slint";
 import { UIState } from "../Types.slint";
 
 export component AppShell inherits Rectangle {
-    callback minimize-requested();
-    callback maximize-requested();
-    callback close-requested();
-
     property <bool> overlay-open: UIState.palette-open
         || UIState.search-open
         || UIState.menu-open
         || UIState.dialog-open
-        || UIState.settings-open
         || UIState.link-open
         || UIState.slash-open
         || UIState.block-menu-open-id >= 0
@@ -34,24 +29,13 @@ export component AppShell inherits Rectangle {
     // these dim the page: an anchored menu with a dark band behind it reads
     // as a rendering fault, not as focus.
     property <bool> modal-open: UIState.dialog-open
-        || UIState.settings-open
         || UIState.link-open;
 
     VerticalLayout {
-        TopBar {
-            minimize-requested => {
-                root.minimize-requested();
-            }
-            maximize-requested => {
-                root.maximize-requested();
-            }
-            close-requested => {
-                root.close-requested();
-            }
-        }
-        // the notice sits UNDER the title bar, not above it: an additive
-        // band at the very top shrank the sidebar and clipped its last row
-        // (A4 sweep, recovered scene)
+        width: root.width;
+        height: root.height;
+        // The native OS title bar is outside the client area. Notices and the
+        // app content begin directly below it, without a second drawn title row.
         if UIState.db-notice != "" && UIState.active-area != "organizer" : Rectangle {
             height: 30px;
             background: Theme.dark ? #3d3517 : #f6e7b2;
@@ -80,14 +64,17 @@ export component AppShell inherits Rectangle {
             }
         }
         HorizontalLayout {
+            vertical-stretch: 1;
+            max-height: 100000px;
             Sidebar {}
             // The top-level areas, chosen by `active-area`, and this is the
             // **only** place they are chosen between — the editor is not a child
             // of the organizer nor the other way round, and a keystroke can only
             // ever reach the one that is mounted. (The 同步 page that used to be
-            // the third area lives on as the settings dialog's 同步 tab.)
-            if UIState.active-area == "organizer" : OrganizerArea {}
-            if UIState.active-area != "organizer" : Editor {}
+            // the third area lives on as the settings page's 同步 tab.)
+            if UIState.settings-open : SettingsDialog {}
+            if !UIState.settings-open && UIState.active-area == "organizer" : OrganizerArea {}
+            if !UIState.settings-open && UIState.active-area != "organizer" : Editor {}
         }
     }
 
@@ -162,7 +149,6 @@ export component AppShell inherits Rectangle {
                 UIState.search-open = false;
                 UIState.menu-open = false;
                 UIState.dialog-open = false;
-                UIState.settings-open = false;
                 UIState.link-open = false;
                 UIState.slash-open = false;
                 UIState.block-menu-open-id = -1;

@@ -75,6 +75,8 @@ component SidebarPinnedRow inherits Rectangle {
 }
 
 export component Sidebar inherits Rectangle {
+    vertical-stretch: 1;
+    max-height: 100000px;
     width: UIState.sidebar-open ? Theme.sidebar-width : 0px;
     clip: true;
     // The drag writes the width every mouse-move; a tween on each of those
@@ -146,8 +148,8 @@ export component Sidebar inherits Rectangle {
 
         // ---- pinned rows: the two areas, then search / settings ----
         // SPEC §四十一's two rows sit above search because they are *places*:
-        // they change what the window is showing, while search and settings open
-        // a panel over it. `shortcut-hint` is empty on them for a reason worth
+        // they change what the window is showing, while search opens a panel over
+        // it and settings is a page. `shortcut-hint` is empty on them for a reason worth
         // stating: a page is opened by a chord, but "show me my notes" is a place
         // the user goes, and the palette is how they get there from the keyboard.
         SidebarPinnedRow {
@@ -218,7 +220,7 @@ export component Sidebar inherits Rectangle {
             HorizontalLayout {
                 padding-left: Theme.spacing-xs + 24px;
                 Text {
-                    text: UIState.app-version;
+                    text: "quire-slint-" + UIState.app-version;
                     font-size: Typography.size-caption;
                     color: Colors.text-muted;
                     vertical-alignment: center;

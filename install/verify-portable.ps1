@@ -32,7 +32,7 @@
 # folders is well past it (see `verify-installer.ps1` for the same fix and the
 # observed failure).
 param(
-    [string]$Exe = "target\release\quire.exe",
+    [string]$Exe = "target\release\quire-slint.exe",
     [string]$Scratch = "",
     [int]$ExitAfter = 3
 )

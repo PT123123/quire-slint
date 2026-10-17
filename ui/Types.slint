@@ -1021,11 +1021,11 @@ export global UIState {
     // monitor or display-scaling change throws the zoom away) and puts the zoom
     // back. See controller::wire.
     callback window-resized();
-    // 最大化 / 窗口化. The flag is mirrored for the title bar's 还原 button, and
-    // the callback is for Rust, which has one job: the moment the window goes
-    // maximized is mirrored for the title bar; Rust queries the live window state
-    // for zoom and caches the last normal rectangle on resize.
+    // Mirrored for the title bar; native resize events update the viewport.
     in-out property <bool> window-maximized: false;
+    // Ask the native window state to toggle; UIState's mirror can lag the OS
+    // maximize/restore notification by one dispatch.
+    callback window-maximize-requested();
     callback move-block(int);
     // drag-reorder (grip handle): Rust packs/unpacks the payload, hovers
     // validate the landing, drops commit one MoveBlockTo command
@@ -1423,6 +1423,9 @@ export global UIState {
     // never on screen together and one three-slot control that changes meaning
     // with the tab is a control nobody can read.
     in-out property <int> org-note-sort: 0;       // 0 最新创建, 1 最新更新, 2 按内容
+    in-out property <bool> org-note-descending: false;
+    in-out property <bool> org-task-descending: false;
+    in-out property <bool> org-note-search-open: false;
     // Whether the 笔记 toolbar's sort list is down. Session state like every
     // other "how the user is looking" fact here (ADR-0073) — and on `UIState`
     // rather than on the component because a headless scene has to be able to
@@ -1518,6 +1521,11 @@ export global UIState {
     // the area it was asked from — leaving for the document must not silently
     // commit a delete the user had not finished looking at.
     in-out property <string> org-undo-text: "";
+    // Task completion uses the same undo toast as a deferred delete. The prior
+    // value is carried with the task id so its Undo button restores this one
+    // checkbox without rewinding unrelated organizer edits.
+    in-out property <int> org-done-undo-id: -1;
+    in-out property <bool> org-done-undo-before: false;
 
     // ── the drafts ──
     // One property per editable field of the detail pane, bound two-way by the
@@ -1764,6 +1772,8 @@ export global UIState {
     // is its own property: one `picked(int)` cannot mean "which of three" on one
     // half and "which of three different ones" on the other.
     callback org-note-sort-picked(int);
+    callback org-note-sort-direction-toggled();
+    callback org-task-sort-direction-toggled();
     callback org-query-changed();
     // a draft changed: the field slot it belongs to, which row, which subtask
     callback org-field-edited(int);

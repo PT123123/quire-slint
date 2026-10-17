@@ -8,7 +8,7 @@
 //      tools/call 经由调用方注入的回调出去：应用层把它翻译成一个
 //      channel 任务，丢给 UI 线程的泵执行（AppState 是 Rc，出不了线程），
 //      再等回复。HTTP 线程自己不认识 AppState。
-//   3. stdio 桥 —— `quire.exe mcp` 子命令。MCP 客户端最普遍的接入方式是
+//   3. stdio 桥 —— `quire-slint.exe mcp` 子命令。MCP 客户端最普遍的接入方式是
 //      spawn 一个子进程走 stdin/stdout，而唯一写者是运行中的应用，所以
 //      桥只做转发：一行 JSON 进来 → POST 到应用内嵌的 HTTP 端点 → 响应
 //      写回 stdout。端口和 token 从库目录旁的 `mcp.json` 读（应用启动
@@ -312,9 +312,9 @@ pub fn mint_token() -> String {
     format!("{hi:016x}{lo:016x}")
 }
 
-// ─── stdio 桥（`quire.exe mcp` 子命令）──────────────────────────────────────
+// ─── stdio 桥（`quire-slint.exe mcp` 子命令）────────────────────────────────
 
-/// 桥的启动参数：`quire.exe mcp [--port N] [--db <path>] [--token <t>]`。
+/// 桥的启动参数：`quire-slint.exe mcp [--port N] [--db <path>] [--token <t>]`。
 /// 端口缺省从指针文件读；token 只信指针文件或显式参数（不给的话，谁拿
 /// 到本机端口谁就能写库，所以缺了就拒绝启动）。
 pub fn run_stdio_bridge(argv: &[String]) -> i32 {

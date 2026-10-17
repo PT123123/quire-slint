@@ -60,7 +60,7 @@ Record "test" (($code -eq 0) -and ($f -eq 0)) "$p passed, $f failed targets, $i 
 # 3 · release — exit 0 and zero warning lines
 $code = Run-Gate "release" { cargo build --workspace --release }
 $warns = (Select-String -Path (Join-Path $OutDir "release.log") -Pattern "^warning:" -CaseSensitive:$false | Measure-Object).Count
-$exe = Get-Item "target/release/quire.exe" -ErrorAction SilentlyContinue
+$exe = Get-Item "target/release/quire-slint.exe" -ErrorAction SilentlyContinue
 Record "release" (($code -eq 0) -and ($warns -eq 0)) "exit $code, $warns warning lines, exe $($exe.Length) B"
 
 # 4 · sweep — every declared scene renders; the changed list is printed for

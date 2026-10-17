@@ -1812,6 +1812,8 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
     // that keeps its own clock would commit the first one's rows early.
     let org_delete_timer: &'static slint::Timer =
         Box::leak(Box::new(slint::Timer::default()));
+    let org_task_done_timer: &'static slint::Timer =
+        Box::leak(Box::new(slint::Timer::default()));
 
     // The sync rounds asked for and not yet answered. Declared here rather than
     // inside `start_sync` because the dialog's two open paths rebuild the rows
@@ -1913,6 +1915,19 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
                 ui.global::<UIState>().set_zoom_level(s.zoom());
             }
         });
+    }
+
+    {
+        let ui_w = ui.as_weak();
+        ui.global::<UIState>()
+            .on_window_maximize_requested(move || {
+                let Some(ui) = ui_w.upgrade() else { return };
+                let window = ui.window();
+                // The UI mirror changes after the native state notification.
+                // Toggle from the live OS state so a delayed/stale mirror can
+                // never turn a maximize click into a second restore request.
+                window.set_maximized(!window.is_maximized());
+            });
     }
 
     {
@@ -2070,6 +2085,10 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
         let s = state.clone();
         ui.global::<UIState>().on_node_clicked(move |id| {
             let g = gw.upgrade().unwrap();
+            // A page-tree selection is a navigation action. The sidebar stays
+            // mounted while SettingsDialog is visible, so dismiss it before
+            // switching the page underneath it.
+            g.set_settings_open(false);
             if id == ROW_NEW_PAGE {
                 let new_id = s.create_page(None);
                 open(&g, &s, new_id);
@@ -5625,7 +5644,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
     }
 
     {
-        // MCP 页的 立即重启：spawn `quire.exe --restart` 带上本会话自己的启动
+        // MCP 页的 立即重启：spawn `quire-slint.exe --restart` 带上本会话自己的启动
         // 参数（--restart 只给帮手进程解析，新会话拿到的是原参数）。帮手会请求
         // 本实例从自己的退出通道优雅退出（最终刷盘 + clean-exit 记录照常跑），
         // 等管道静默——也就是本进程的文件句柄真的放开了——才起新实例，所以
@@ -5898,6 +5917,8 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
         let s = state.clone();
         ui.global::<UIState>().on_org_open_requested(move |tab| {
             let g = gw.upgrade().unwrap();
+            // Organizer destinations are sibling pages to settings.
+            g.set_settings_open(false);
             org_commit_field(&g, &s);
             org_open(&g, &s, tab);
         });
@@ -5921,20 +5942,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
     {
         let gw = gw.clone();
         let s = state.clone();
-        // A single click **selects** a note and nothing more (ADR-0137). It used to
-        // raise the note page — title, body, comments and all — which made the
-        // list unusable for what a list is for: reading and choosing. Reaching
-        // the page is now the context menu's 打开, and 详细信息 is its own row, so
-        // the two asks are two words rather than one gesture that guessed.
-        //
-        // The split that makes "and nothing more" true: this write lands on
-        // `org-selected-note`, the highlight the rows style themselves by, while
-        // the page's gate is `org-note-open` — a property this handler never
-        // touches. Writing the open gate here was the bug: the panel rose on a
-        // click, and since the drafts are deliberately **not** loaded — they are
-        // the page's own fields; loading them on a click would commit whatever
-        // the page last had half-typed into a note the user only pointed at —
-        // the page it rose with showed an empty body.
+        // Commit the previous draft before opening the next docked note.
         ui.global::<UIState>().on_org_note_selected(move |id| {
             let g = gw.upgrade().unwrap();
             // While 多选 is on, a tap picks rather than selects — the same route on
@@ -5942,9 +5950,18 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
             if g.get_org_selecting() {
                 s.org_selection_toggle(id as i64, false);
             } else {
-                g.set_org_selected_note(id);
+                org_commit_field(&g, &s);
+                if !g.get_quick_note_host() { g.set_org_capture_open(false); }
+                if g.get_org_selected_note() == id {
+                    g.set_org_note_open(id);
+                } else {
+                    g.set_org_selected_note(id);
+                }
             }
             org_refresh(&g, &s);
+            if !g.get_org_selecting() {
+                org_load_drafts(&g, &s);
+            }
         });
     }
     {
@@ -6175,8 +6192,30 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
                 org_refresh(&g, &s);
                 return;
             }
-            s.org_task_toggle_done(id as i64);
+            let was_done = s.org_task_done_value(id as i64).unwrap_or(false);
+            s.org_task_done(id as i64, !was_done);
             org_refresh(&g, &s);
+            if !was_done {
+                g.set_org_done_undo_id(id);
+                g.set_org_done_undo_before(was_done);
+                g.set_org_undo_text("任务已完成".into());
+                let gw = gw.clone();
+                org_task_done_timer.start(
+                    slint::TimerMode::SingleShot,
+                    std::time::Duration::from_millis(ORG_DELETE_UNDO_MS),
+                    move || {
+                        let Some(g) = gw.upgrade() else { return };
+                        if g.get_org_done_undo_id() == id {
+                            g.set_org_done_undo_id(-1);
+                            g.set_org_undo_text("".into());
+                        }
+                    },
+                );
+            } else if g.get_org_done_undo_id() == id {
+                org_task_done_timer.stop();
+                g.set_org_done_undo_id(-1);
+                g.set_org_undo_text("".into());
+            }
         });
     }
     {
@@ -6234,7 +6273,17 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
         let s = state.clone();
         ui.global::<UIState>().on_org_undo_delete(move || {
             let g = gw.upgrade().unwrap();
-            org_undo_delete(org_delete_timer, &g, &s);
+            if g.get_org_done_undo_id() >= 0 {
+                org_task_done_timer.stop();
+                let id = g.get_org_done_undo_id() as i64;
+                let before = g.get_org_done_undo_before();
+                g.set_org_done_undo_id(-1);
+                g.set_org_undo_text("".into());
+                s.org_task_done(id, before);
+                org_refresh(&g, &s);
+            } else {
+                org_undo_delete(org_delete_timer, &g, &s);
+            }
         });
     }
     {
@@ -6389,6 +6438,24 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
         ui.global::<UIState>().on_org_note_sort_picked(move |slot| {
             let g = gw.upgrade().unwrap();
             g.set_org_note_sort(slot);
+            org_refresh(&g, &s);
+        });
+    }
+    {
+        let gw = gw.clone();
+        let s = state.clone();
+        ui.global::<UIState>().on_org_note_sort_direction_toggled(move || {
+            let g = gw.upgrade().unwrap();
+            g.set_org_note_descending(!g.get_org_note_descending());
+            org_refresh(&g, &s);
+        });
+    }
+    {
+        let gw = gw.clone();
+        let s = state.clone();
+        ui.global::<UIState>().on_org_task_sort_direction_toggled(move || {
+            let g = gw.upgrade().unwrap();
+            g.set_org_task_descending(!g.get_org_task_descending());
             org_refresh(&g, &s);
         });
     }
@@ -7100,8 +7167,11 @@ fn org_capture_open(g: &UIState<'_>, state: &Rc<AppState>) {
     } else {
         format!("#{tag} ")
     };
-    g.set_org_capture_caret(preset.len() as i32);
-    g.set_org_capture_draft(preset.into());
+    // Selecting a note can pause this docked composer. Resume its draft.
+    if g.get_org_capture_draft().is_empty() {
+        g.set_org_capture_caret(preset.len() as i32);
+        g.set_org_capture_draft(preset.into());
+    }
     g.set_org_capture_open(true);
     // The 速记 window shows the seed too, or Alt+N would arrive with an empty
     // field over a tag filter the notes page is already filtering by.
@@ -7471,6 +7541,9 @@ fn org_deferred_delete(
     message: Option<String>,
 ) {
     org_commit_field(g, s);
+    // A later delete owns the shared Undo bar; do not let an older completion
+    // timer clear its message or steal the Undo action.
+    g.set_org_done_undo_id(-1);
     let message =
         message.unwrap_or_else(|| format!("已移入回收站：{}", s.org_batch_label(&ids, is_task)));
     let token = s.org_defer_delete(ids, is_task, message.clone());

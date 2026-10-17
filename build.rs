@@ -64,10 +64,10 @@ fn write_windows_resource() {
         icon = quoted(&icon.display().to_string()),
         company = text("Quire"),
         // ASCII only: rc.exe reads this file in the system codepage
-        description = text("Quire - a local, fast editor for your own notes"),
-        internal = text("quire"),
-        original = text("quire.exe"),
-        product = text("Quire"),
+        description = text("Quire Slint - a local, fast editor for your own notes"),
+        internal = text("quire-slint"),
+        original = text("quire-slint.exe"),
+        product = text("Quire Slint"),
         file_version = text(&format!("{version}.0")),
         product_version = text(&format!("Quire {version}")),
     );

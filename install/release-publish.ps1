@@ -27,7 +27,7 @@
 #      and the installer's own file name and AppVersion are read from that
 #      resource — so a publish that built before the bump would publish the
 #      previous version under a new tag.
-#   2. `cargo build --release --bin quire`, then ask the exe to confirm it took
+#   2. `cargo build --release --bin quire-slint`, then ask the exe to confirm it took
 #      the bump. A stale exe reports the previous version here; `NotAttempted` (no
 #      rc.exe on this machine) leaves the block empty, and an empty value is a
 #      soft miss rather than a failed publish, the way build.rs treats it.
@@ -91,10 +91,10 @@ Write-Output "==> version -> $version"
 # ships. This is the slow step (~2m30s), and it is one crate: the bump
 # invalidated `quire` itself, which is where codegen-units = 1 + thin LTO spends
 # its time (ADR-0024's update, PERFORMANCE.md "Build cost").
-cargo build --release --bin quire
+cargo build --release --bin quire-slint
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$exe = Join-Path $root 'target\release\quire.exe'
+$exe = Join-Path $root 'target\release\quire-slint.exe'
 if (-not (Test-Path $exe)) { throw "no exe at $exe; the build reported success but left nothing" }
 
 $reported = (Get-Item $exe).VersionInfo.FileVersion
@@ -148,7 +148,7 @@ Two ways in, both in this release:
 - **Quire-$version-windows-x64-setup.exe** installs per-user (no elevation, no
   admin prompt), and uninstalling never touches your notes.
 - **Quire-$version-windows-x64.zip** is the portable build: unzip it and run
-  quire.exe. Nothing else is needed beside it.
+  quire-slint.exe. Nothing else is needed beside it.
 
 Your library is a single SQLite file at %APPDATA%\Quire\quire.db - the same
 folder name the Android shells use, so a library moves between them. `--portable`

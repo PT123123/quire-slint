@@ -394,6 +394,8 @@ mod win_style {
     extern "system" {
         fn GetWindowLongPtrW(hwnd: isize, index: i32) -> isize;
         fn SetWindowLongPtrW(hwnd: isize, index: i32, value: isize) -> isize;
+        fn SetForegroundWindow(hwnd: isize) -> i32;
+        fn ShowWindow(hwnd: isize, command: i32) -> i32;
         fn SetWindowPos(
             hwnd: isize,
             insert_after: isize,
@@ -453,6 +455,20 @@ mod win_style {
             );
             if ok == 0 {
                 return Err("SetWindowPos failed".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    /// Restore and activate the main window after a tray click. `show()` alone
+    /// can leave a previously minimized window behind other applications.
+    pub fn activate_window(window: &slint::Window) -> Result<(), String> {
+        let hwnd = hwnd_of(window)?;
+        unsafe {
+            const SW_RESTORE: i32 = 9;
+            ShowWindow(hwnd, SW_RESTORE);
+            if SetForegroundWindow(hwnd) == 0 {
+                return Err("SetForegroundWindow refused activation".to_string());
             }
         }
         Ok(())
@@ -599,6 +615,20 @@ pub fn clear_window_edge(window: &slint::Window) -> Result<(), String> {
     {
         let _ = window;
         Err("this platform draws no window edge to take down".to_string())
+    }
+}
+
+/// Restore and activate a window on Windows; other platforms use their
+/// compositor's regular activation path when `show()` is called.
+pub fn activate_window(window: &slint::Window) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        win_style::activate_window(window)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+        Ok(())
     }
 }
 

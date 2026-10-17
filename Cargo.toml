@@ -16,11 +16,15 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 [package]
 name = "quire"
-version = "0.1.27"
+version = "0.1.36"
 edition = "2021"
 description = "A local, GPU-accelerated, Notion-like document app built with Rust + Slint"
 # three binaries exist (quire / quire-shot / quire-typing); this is the app
-default-run = "quire"
+default-run = "quire-slint"
+
+[[bin]]
+name = "quire-slint"
+path = "src/main.rs"
 
 [dependencies]
 # The model, the store and the windowless services, at a commit that is known

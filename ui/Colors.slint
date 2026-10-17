@@ -118,7 +118,10 @@ export global Colors {
     // the window root only; the areas above it are transparent so the ramp is
     // one surface instead of one per pane.
     out property <brush> page: @linear-gradient(180deg, Colors.p.bg, Colors.p.grad2);
-    out property <color> sidebar: Colors.p.bg-elev;
+    // Keep the rail a quiet step apart from both the page and its cards. The
+    // sidebar used to share the exact card surface, so wide task columns could
+    // visually run into it even though the page background differed.
+    out property <color> sidebar: Colors.p.bg-elev.mix(Colors.p.bg-elev2, 0.35);
     out property <color> surface: Colors.p.bg-elev;
     out property <color> surface-hover: Colors.p.bg-elev2;
     out property <color> surface-selected: Colors.p.bg-elev2.mix(Colors.p.accent, 0.22);

@@ -33,12 +33,14 @@ Windows 11 26200, 100% scale. CPU is percent of **one** core (this chip has 16).
 Reading it: a 10 000-block page costs 16 MB of Working Set over the empty
 shell, because only the rows on screen are built, and an idle window costs
 under 1% of a core. Reproduce with
-`benchmarks/scripts/bench_matrix.ps1 -Exe target\release\quire.exe`; the
+`benchmarks/scripts/bench_matrix.ps1 -Exe target\release\quire-slint.exe`; the
 method, the caveats and every previous milestone are in `docs/PERFORMANCE.md`.
 
 ## Release build cost (2026-10-17)
 
-Patch release build for **0.1.27**, Windows x64. This final source revision was
+Patch release builds, Windows x64. The 0.1.27 row is the cold build; 0.1.28
+reused its isolated Release target and records the incremental patch build.
+Both were measured with `cargo build --release --locked`; compiler memory was sampled
 built with the same measurement script as GPUI in a fresh, isolated target
 directory, using `cargo build --release --locked`; compiler memory was sampled
 every 250 ms. Both target-cache figures below are the complete size of their
@@ -48,6 +50,7 @@ does not record that measurement.
 | shell | build | time | peak build memory | target cache change | EXE size |
 |-------|-------|-----:|------------------:|--------------------:|---------:|
 | Slint 0.1.27 | fresh isolated target; `cargo build --release --locked` | 740.52s (12m 20.52s) | Working Set 5,626 MiB (5.49 GiB); Private 6,411.9 MiB (6.26 GiB) | 2,423,470,763 B (2.26 GiB) | 38,380,032 B (36.60 MiB) |
+| Slint 0.1.28 | reused isolated Release target; incremental `cargo build --release --locked` | 535.09s (8m 55.09s) | Working Set 4,745.7 MiB (4.63 GiB); Private 5,278.8 MiB (5.15 GiB) | +311,674,518 B | 38,384,128 B (36.60 MiB) |
 | GPUI 0.1.0 (README, 2026-10-17) | fresh isolated target; `cargo build --release --locked` | 246.74s (4m 06.74s) | Working Set 3,170.6 MiB (3.10 GiB); Private 4,057.7 MiB (3.96 GiB) | 1,932,341,652 B (1.80 GiB) | 26,258,432 B (25.04 MiB) |
 
 The isolated target directory prevents the existing multi-renderer Slint target
@@ -60,22 +63,28 @@ series. Full build JSON and logs are in `%TEMP%` as
 
 ## Daily build cost (2026-10-17)
 
-The daily command is `cargo build --bin quire` (the `dev` profile, incremental,
-one application binary). This sample followed a `.slint` style change, so Cargo
+The daily command is `cargo build --bin quire-slint` (the `dev` profile, incremental,
+one application binary). Every changed build, including debug builds, must advance
+the package patch version and synchronize `Cargo.lock` so the running version is
+identifiable. This sample followed a `.slint` style change, so Cargo
 reused the existing dependency cache but rebuilt the `quire` crate, including
 its generated UI code. It is an incremental project build, not a no-change hot
 build or a clean build.
 
-| build | time | peak build memory | `target/debug` change | EXE size |
-|-------|-----:|------------------:|---------------------:|---------:|
-| Slint daily, UI change | 199.29s (3m 19s) | Working Set 5,854.5 MiB (5.72 GiB); Private 6,362.4 MiB (6.21 GiB) | +2,082,961,803 B; total 23,054,012,712 B (21.47 GiB) | 82,958,848 B (79.07 MiB) |
+| shell / build | time | peak build memory | `target/debug` change | EXE size |
+|--------------|-----:|------------------:|---------------------:|---------:|
+| Slint 0.1.27 daily, UI change | 199.29s (3m 19s) | Working Set 5,854.5 MiB (5.72 GiB); Private 6,362.4 MiB (6.21 GiB) | +2,082,961,803 B; total 23,054,012,712 B (21.47 GiB) | 82,958,848 B (79.07 MiB) |
+| Slint 0.1.29 daily, UI + Rust + binary rename | `cargo build --bin quire-slint` (incremental dev build) | 199.26s (3m 19.26s) | Working Set 5,902.9 MiB (5.76 GiB); Private 6,419.6 MiB (6.27 GiB) | +2,677,864,856 B; total 25,896,013,330 B (24.12 GiB) | 82,987,008 B (79.07 MiB) |
+| GPUI daily |  |  |  |  |
 
-The existing `target/debug` tree was 20,971,050,909 B before this build. The
-comparison with the Release cold build above shows why daily and release results
-must stay separate: this edit took 3m19s with cached dependencies, while the
-Release row rebuilt into an empty target and took 12m21s. This single daily
-sample is a baseline; the next no-change or Rust-only build can show the warm
-incremental cost.
+The 0.1.29 build started with `target/debug` at 23,218,148,474 B. The GPUI
+README records Release cold-build cost but has no daily-build measurements, so
+its daily row is intentionally blank. The previous Slint daily build began at
+20,971,050,909 B. The large directory totals include cached renderer variants
+and old incremental artifacts; the +2.50 GiB here is the measured tree growth
+for this build, not the executable's size. Daily and Release figures stay
+separate: this incremental dev build took 3m19s, while the 0.1.27 Release cold
+build took 12m21s.
 
 ### Where a crate split may help
 
