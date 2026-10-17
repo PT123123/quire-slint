@@ -91,10 +91,9 @@ pub fn copy_to_clipboard(text: &str) -> bool {
 /// message printed to a console the release build does not even have would be a
 /// rule the user never learns about.
 ///
-/// `MessageBoxW` rather than a Slint popup for the same reason the clipboard
-/// above is hand-declared FFI: this runs before the Slint backend exists, and
-/// `MessageBoxW` is one call with no event loop of its own. `MB_OK` only, so the
-/// box is a statement and not a question the app has no handler for.
+/// A timed Windows message box rather than a Slint popup: this runs before the
+/// Slint backend exists. The timeout ensures a rejected second launch cannot
+/// leave a hidden process alive indefinitely when nobody dismisses the notice.
 pub fn notify(title: &str, body: &str) {
     #[cfg(target_os = "windows")]
     {
@@ -103,7 +102,14 @@ pub fn notify(title: &str, body: &str) {
 
         #[link(name = "user32")]
         extern "system" {
-            fn MessageBoxW(hwnd: isize, text: *const u16, caption: *const u16, kind: u32) -> i32;
+            fn MessageBoxTimeoutW(
+                hwnd: isize,
+                text: *const u16,
+                caption: *const u16,
+                kind: u32,
+                language_id: u16,
+                timeout_ms: u32,
+            ) -> i32;
         }
 
         fn wide(s: &str) -> Vec<u16> {
@@ -120,7 +126,14 @@ pub fn notify(title: &str, body: &str) {
         // here to fall back to, and a failed notice is not worth failing a
         // launch over.
         unsafe {
-            let _ = MessageBoxW(0, text.as_ptr(), caption.as_ptr(), MB_OK | MB_ICONINFORMATION);
+            let _ = MessageBoxTimeoutW(
+                0,
+                text.as_ptr(),
+                caption.as_ptr(),
+                MB_OK | MB_ICONINFORMATION,
+                0,
+                8_000,
+            );
         }
     }
     #[cfg(not(target_os = "windows"))]

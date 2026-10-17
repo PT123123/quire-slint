@@ -452,7 +452,14 @@ fn list_tasks(state: &Rc<AppState>, include_trashed: bool) -> Result<Value, Stri
 }
 
 fn create_task(state: &Rc<AppState>, args: &Value) -> Result<Value, String> {
+    let title = arg_str(args, "title")?;
     let list = args.get("list_id").and_then(Value::as_i64).unwrap_or(0);
+    if list < 0 || (list != 0 && !state.org_catalog().lists.iter().any(|row| row.id.0 == list as u64)) {
+        return Err(format!("清单 {list} 不存在。"));
+    }
+    let priority = arg_opt_str(args, "priority")
+        .map(priority_slot)
+        .transpose()?;
     let tags: Vec<String> = arg_opt_str(args, "tags")
         .map(|tg| {
             tg.split(|c| c == ',' || c == '，')
@@ -465,7 +472,6 @@ fn create_task(state: &Rc<AppState>, args: &Value) -> Result<Value, String> {
     let id = state
         .org_create_task_tagged(list, tags)
         .ok_or("任务创建失败。")?;
-    let title = arg_str(args, "title")?;
     state.org_task_title(id, title.to_string());
     if let Some(n) = arg_opt_str(args, "notes") {
         if !n.is_empty() {
@@ -477,8 +483,8 @@ fn create_task(state: &Rc<AppState>, args: &Value) -> Result<Value, String> {
             state.org_task_due(id, d.trim().to_string());
         }
     }
-    if let Some(p) = arg_opt_str(args, "priority") {
-        state.org_task_priority(id, priority_slot(p)?);
+    if let Some(priority) = priority {
+        state.org_task_priority(id, priority);
     }
     Ok(json!({ "id": id }))
 }

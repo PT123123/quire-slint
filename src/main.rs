@@ -502,7 +502,7 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                 quire::platform::quit::SecondLaunch::Primary => return,
                 quire::platform::quit::SecondLaunch::AlreadyRunning { version } => (
                     "Quire 已在运行",
-                    format!("Quire {version} 已经在运行，本次启动已退出。\n\n可在任务栏托盘图标上右键选择「显示主界面」。"),
+                    format!("Quire {version} 已经在运行，本次启动已退出。\n\n可在任务栏托盘图标上右键选择「显示主界面」。如果本次是打开 Markdown 文件启动，文件没有转交给现有窗口；请先退出 Quire，再重新打开该文件。"),
                 ),
                 quire::platform::quit::SecondLaunch::RunningIsNewer { version } => (
                     "已有更新版本在运行",
@@ -571,11 +571,13 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
     mark("logging_init");
 
     // Persistence (M3): open (or create) the database. A failure to open
-    // means the session runs in memory only — never fall back to writing
-    // over a database we could not read.
+    // aborts startup. An in-memory fallback looks editable but silently loses
+    // every change when the session exits.
     let mut recovered: Option<std::path::PathBuf> = None;
-    let mut moved_from: Option<std::path::PathBuf> = None;
-    let repo: Option<std::sync::Arc<quire::storage::SqliteRepository>> = {
+    let (repo, moved_from): (
+        Option<std::sync::Arc<quire::storage::SqliteRepository>>,
+        Option<std::path::PathBuf>,
+    ) = {
         // D12: this is the start's one resolve of the placement rules (M8
         // FEEDBACK #13) — it also carries a legacy `appdata/` library across.
         // What comes back is the file to open plus, once per install, the
@@ -596,13 +598,17 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                 if let Some(from) = &report.recovered_from {
                     recovered = Some(from.clone());
                 }
-                moved_from = report.migrated_from.clone();
+                let moved_from = report.migrated_from.clone();
                 report.log();
-                Some(std::sync::Arc::new(r))
+                (Some(std::sync::Arc::new(r)), moved_from)
             }
             Err(e) => {
-                eprintln!("quire: database unavailable ({}); running in memory", e);
-                None
+                let message = format!(
+                    "资料库无法打开，Quire 未启动，也不会接受无法保存的编辑。\n\n{e}"
+                );
+                eprintln!("quire: database unavailable: {e}");
+                platform::notify("资料库无法打开", &message);
+                return Err(message);
             }
         }
     };

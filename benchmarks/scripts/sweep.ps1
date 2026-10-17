@@ -20,9 +20,9 @@ Add-Type -AssemblyName System.Drawing
 # second sweep into a *diff*: the first re-sweep caught two original findings
 # that turned out to be 1:1 eyeball misreads of scenes whose pixels had never
 # moved, so "identical bytes" is now the evidence that a verdict carries over.
-$shot = "target\debug\quire-shot.exe"
+$shot = "target-shot\debug\quire-shot.exe"
 if (-not (Test-Path $shot)) {
-    Write-Output "build it first: cargo build --features software --bin quire-shot"
+    Write-Output "build it first: cargo build --features software --bin quire-shot --target-dir target-shot"
     exit 1
 }
 

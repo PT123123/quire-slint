@@ -34,6 +34,10 @@ use serde_json::{json, Value};
 /// of that order would fail the *sync* bind while the MCP page still looked
 /// healthy. 5880 is next free: 5877 LAN share, 5878 sync, 5879 discovery.
 pub const DEFAULT_PORT: u16 = 5880;
+/// Bound request memory and time even for authenticated local clients.
+const MAX_REQUEST_BODY_BYTES: usize = 8 * 1024 * 1024;
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const MAX_ACTIVE_CONNECTIONS: usize = 8;
 
 /// 我们能原样回给客户端的协议版本。协商规则：请求带来的版本在这张表里
 /// 就回它，否则回最新的——MCP 规范要求服务端这样降级。
@@ -183,21 +187,32 @@ impl McpServer {
 
     /// 在已绑定的 listener 上服务到永远（调用方开线程）。
     pub fn serve(&self, listener: TcpListener) {
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         for stream in listener.incoming() {
             let Ok(stream) = stream else { continue };
+            let previous = active.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            if previous >= MAX_ACTIVE_CONNECTIONS {
+                active.fetch_sub(1, std::sync::atomic::Ordering::Release);
+                let _ = respond(&stream, 503, "application/json", "{\"error\":\"too many requests\"}");
+                continue;
+            }
             let this = McpServer {
                 port: self.port,
                 token: self.token.clone(),
                 tools: self.tools.clone(),
                 call: self.call.clone(),
             };
+            let active = active.clone();
             std::thread::spawn(move || {
                 let _ = this.handle_connection(stream);
+                active.fetch_sub(1, std::sync::atomic::Ordering::Release);
             });
         }
     }
 
     fn handle_connection(&self, stream: TcpStream) -> std::io::Result<()> {
+        stream.set_read_timeout(Some(REQUEST_TIMEOUT))?;
+        stream.set_write_timeout(Some(REQUEST_TIMEOUT))?;
         let mut reader = BufReader::new(stream.try_clone()?);
         let mut request_line = String::new();
         reader.read_line(&mut request_line)?;
@@ -240,6 +255,9 @@ impl McpServer {
             // （每请求一条 POST）照常工作。
             return respond(&stream, 405, "application/json", "{\"error\":\"POST only\"}");
         }
+        if content_length > MAX_REQUEST_BODY_BYTES {
+            return respond(&stream, 413, "application/json", "{\"error\":\"request body too large\"}");
+        }
         let mut body = vec![0u8; content_length];
         reader.read_exact(&mut body)?;
         let body = String::from_utf8_lossy(&body).to_string();
@@ -257,6 +275,8 @@ fn respond(mut stream: &TcpStream, code: u16, ctype: &str, body: &str) -> std::i
         401 => "Unauthorized",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        413 => "Payload Too Large",
+        503 => "Service Unavailable",
         _ => "Internal Server Error",
     };
     let head = format!(
