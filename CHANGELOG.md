@@ -233,6 +233,23 @@
   节关键词必须是行关键词并集的维护规则、CopyableText 的边界、五个 tab 的内容清单、
   缩放行与 `apply_zoom` 的边缘规则、持久化键清单与缺省语义 —— 改设置 UI 之前先读它
 
+- **设置页右边 260px 的内容此前根本画不进来**. `SettingsDialog` 的根写着
+  `width: 100%`，而它挂在 `AppShell` 的 `HorizontalLayout` 里和侧栏并排 —— 布局给它的
+  槽位是「窗口宽 − 侧栏宽」，`100%` 却按整个父容器算，于是整页按**窗口全宽**排版，
+  右边一截落在窗口外，而内容区的 `Flickable` 只有纵向滚动，越界的东西没有任何办法
+  看到。1280×800 实拍：tab 条 6 格共 1236px（应为 964），「关于」整格在窗口外，缩放行
+  的 − / 100% / + / 复位 四个控件一个都不在视口里，12 张主题卡排成一行不折。改成
+  `horizontal-stretch: 1` + `max-width: 100000px`（`OrganizerArea` 早就写下的同一条
+  规则）后，940×700 与 1280×800 两档、六个 tab 全部重拍，tab 条 964 / 624px 落在列内。
+  同一类越界还有三处：`SettingsTabs` 的 `width: 100%` 和同步 / MCP 两个包装
+  `VerticalLayout` 的 `width: parent.width` —— 百分比量的是**含 padding 的列宽**，
+  每格多吃 24px，MCP 的说明行因此贴着窗口边折行、同步页的「30 分钟」被切一半；
+  `ShortcutRow` 的键位列 108px 装不下 `Ctrl+B / I / E / M`，`TextInput` 不裁剪，
+  直接压在标签上（现 140px + 标签列 stretch）。关于页那两行用
+  `Rectangle { width: 0px; }` 当间隔，「版本」和「Quire 0.1.36」叠在一起 —— 现在是
+  56px 标签列 + `spacing-md`。`docs/SETTINGS_UI.md` 的第一节按现状重写（它还在讲
+  560px 的 `PopupWindow`、outside-click 和打开即聚焦，四条全已经不成立了）
+
 ### 同步
 
 - **同步页退场, 回到设置里当它的「同步」tab** (ADR-0144, 收回 ADR-0132). 当初独立

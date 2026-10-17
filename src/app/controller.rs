@@ -3321,8 +3321,8 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
         });
     }
 
-    // persistence: arm the flush timer hook; every recorded batch restarts
-    // it, so the write lands once the user has been quiet for 600 ms
+    // persistence: arm one timer per pending burst. AppState does not re-arm it
+    // for later changes, bounding how long the oldest queued edit stays in memory.
     {
         let t: &'static slint::Timer = Box::leak(Box::new(slint::Timer::default()));
         let sw = std::rc::Rc::downgrade(&state);
@@ -8625,9 +8625,34 @@ fn import_markdown_dialog(g: &UIState<'_>, state: &Rc<AppState>) {
 /// Import `path` as a new page, record it, and open it. Shared by the
 /// palette command and the .md file-association dispatch (--open).
 pub fn import_from_path(g: &UIState<'_>, state: &Rc<AppState>, path: &std::path::Path) {
-    let Ok(src) = std::fs::read_to_string(path) else {
-        eprintln!("quire: import failed: cannot read {}", path.display());
-        return;
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            g.set_db_notice(format!("导入失败：无法读取 {}（{}）", path.display(), error).into());
+            return;
+        }
+    };
+    let src = if let Some(bytes) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        String::from_utf8_lossy(bytes).into_owned()
+    } else if let Some(bytes) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        decode_utf16_markdown(bytes, true)
+    } else if let Some(bytes) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        decode_utf16_markdown(bytes, false)
+    } else if let Ok(text) = std::str::from_utf8(&bytes) {
+        text.to_string()
+    } else {
+        let (decoded, _, had_errors) = encoding_rs::GB18030.decode(&bytes);
+        if had_errors
+            || decoded.chars().any(|c| {
+                c == '\0' || (c < ' ' && !matches!(c, '\n' | '\r' | '\t' | '\u{0C}'))
+            })
+        {
+            g.set_db_notice(
+                format!("导入失败：{} 不是可识别的 Markdown 文本编码。", path.display()).into(),
+            );
+            return;
+        }
+        decoded.into_owned()
     };
     let title = path
         .file_stem()
@@ -8665,6 +8690,13 @@ pub fn import_from_path(g: &UIState<'_>, state: &Rc<AppState>, path: &std::path:
     state.record(rest);
     state.rename_page(new_id, &title);
     open(g, state, new_id);
+}
+
+fn decode_utf16_markdown(bytes: &[u8], little_endian: bool) -> String {
+    let words = bytes.chunks_exact(2).map(|pair| {
+        if little_endian { u16::from_le_bytes([pair[0], pair[1]]) } else { u16::from_be_bytes([pair[0], pair[1]]) }
+    });
+    String::from_utf16_lossy(&words.collect::<Vec<_>>())
 }
 
 fn find_inserted_id(changes: &[Change]) -> Option<i32> {

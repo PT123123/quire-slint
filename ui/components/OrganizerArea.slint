@@ -1631,6 +1631,9 @@ export component OrganizerArea inherits Rectangle {
                                 Text { text: UIState.org-view-count-label; font-size: Typography.size-caption; color: Colors.text-muted; vertical-alignment: center; }
                                 Rectangle { horizontal-stretch: 1; }
                                 IconButton { icon-name: "refresh"; icon-color: Colors.text-muted; hover-color: Colors.accent-text; clicked => { UIState.sync-now-all(); } }
+                                IconButton { icon-name: "todo-check"; clicked => { UIState.org-select-entered(UIState.org-tab); } }
+                                IconButton { icon-name: "dots-horizontal"; clicked => { UIState.org-command-opened(UIState.org-tab); } }
+                                if UIState.org-tab == 0 : IconButton { icon-name: "copy"; clicked => { UIState.org-notes-copy-all(); } }
                             }
                             HorizontalLayout {
                                 height: 32px; spacing: 8px;
@@ -1655,9 +1658,6 @@ export component OrganizerArea inherits Rectangle {
                         if !UIState.org-selecting : HorizontalLayout {
                             height: 30px;
                             spacing: 6px;
-                            OrgButton { label: "多选"; accent: true; font-size: Typography.size-caption; clicked => { UIState.org-select-entered(UIState.org-tab); } }
-                            OrgButton { label: "批量操作指令…"; accent: true; font-size: Typography.size-caption; clicked => { UIState.org-command-opened(UIState.org-tab); } }
-                            if UIState.org-tab == 0 : OrgButton { label: "复制全部笔记"; accent: true; font-size: Typography.size-caption; clicked => { UIState.org-notes-copy-all(); } }
                             if UIState.org-bin-open : OrgButton { label: "清空回收站"; danger: true; font-size: Typography.size-caption; clicked => { UIState.org-bin-emptied(); } }
                         }
 
@@ -1735,9 +1735,8 @@ export component OrganizerArea inherits Rectangle {
                         if UIState.org-tab == 0 && !UIState.org-selecting : VerticalLayout {
                             height: 76px;
                             spacing: 8px;
-                            if !UIState.org-note-search-open : OrgButton {
-                                label: "搜索笔记";
-                                font-size: Typography.size-caption;
+                            if !UIState.org-note-search-open : IconButton {
+                                icon-name: "search";
                                 clicked => { UIState.org-note-search-open = true; }
                             }
                             if UIState.org-note-search-open : OrgInput {
@@ -1798,9 +1797,8 @@ export component OrganizerArea inherits Rectangle {
                                     }
                                     closed => { UIState.org-note-sort-open = false; }
                                 }
-                                if !UIState.org-bin-open : OrgButton {
-                                    label: UIState.org-note-descending ? "倒序" : "顺序";
-                                    font-size: Typography.size-caption;
+                                if !UIState.org-bin-open : IconButton {
+                                    icon-name: UIState.org-note-descending ? "chevron-down" : "chevron-up";
                                     clicked => { UIState.org-note-sort-direction-toggled(); }
                                 }
 

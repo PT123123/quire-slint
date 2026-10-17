@@ -1878,11 +1878,16 @@ impl AppState {
         if !settings_only {
             self.db_content_stamp.set(self.db_content_stamp.get() + 1);
         }
+        let persistence_was_pending = self.persistence.as_ref().is_some_and(|p| p.has_pending());
         if let Some(p) = &self.persistence {
             p.record(changes);
         }
-        if let Some(hook) = &*self.flush_hook.borrow() {
-            hook();
+        // Arm once for the oldest queued change. Re-arming on every record lets
+        // read-side MCP log rows postpone a write forever.
+        if !persistence_was_pending {
+            if let Some(hook) = &*self.flush_hook.borrow() {
+                hook();
+            }
         }
     }
 
@@ -17036,11 +17041,11 @@ fn note_tag_tokens(text: &str) -> Vec<String> {
 /// input means, so the row a typed string produces and the string it renders
 /// back cannot disagree.
 ///
-/// Space is the primary separator used by the organizer's tag fields. Commas
-/// remain accepted for older muscle memory and pasted values.
+/// Commas separate tags; spaces are preserved inside a tag so editable text can
+/// round-trip labels such as `Machine Learning`.
 fn parse_tags(input: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for tag in input.split([' ', '\n', '\t', ',', '，', '、']) {
+    for tag in input.split([',', '，', '、', '\n', '\t']) {
         let tag = tag.trim();
         if tag.is_empty() || out.iter().any(|t| t == tag) {
             continue;
@@ -17053,7 +17058,7 @@ fn parse_tags(input: &str) -> Vec<String> {
 /// The same list as its editable form — `parse_tags`'s inverse for the input's
 /// initial value.
 fn tags_text(tags: &[String]) -> String {
-    tags.join(" ")
+    tags.join(", ")
 }
 
 // ─── a tag is a path ────────────────────────────────────────────────────────

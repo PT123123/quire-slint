@@ -1,21 +1,29 @@
-# 设置弹窗显示逻辑规格
+# 设置页显示逻辑规格
 
-本文整理设置弹窗（`ui/components/SettingsDialog.slint`）的显示规则：什么在什么时候可见、
+本文整理设置页（`ui/components/SettingsDialog.slint`）的显示规则：什么在什么时候可见、
 每一行控件归谁所有、数值从哪里来又写到哪里去。改设置相关的 UI 之前先读这篇——
 这里的大多数规则都对应一次真实回归（出处写在括号里）。
 
-## 一、弹窗本体
+## 一、页面本体
 
-- `PopupWindow`，宽 **560px**（同步页搬回弹窗后定的，ADR-0132），窗口内居中。
-- 高度 = `min(内容高 + 2×spacing-lg, max(窗口高 − 80, 320))`：卡片跟着内容长，
-  但永远装得进窗口——底部行被截掉的对话框没有"滚下去"之外的路，所以内容区是
-  一个 `Flickable`。
-- `close-policy: close-on-click-outside`（ADR-0118 后半）。引擎吃掉外部点击并关闭
-  弹窗，`AppWindow` 的 `settings-shown` 镜像把这次关闭写回 `UIState.settings-open`，
-  Rust 层由此得知。不要改回 `no-auto-close`——那是唯一一种从外面关不掉的策略。
-- 打开时**搜索框**聚焦（`changed opened`），它是这个弹窗现在最主要的输入。
-- Escape 有两个受理者：0×0 的 focus-proxy 与搜索框自己的 `key-pressed`，都走
-  `settings-close-requested`。
+- **整页，不是弹窗**：挂在 `AppShell` 的 `HorizontalLayout` 里与 `Sidebar` 并排，
+  `UIState.settings-open` 为真时顶替 OrganizerArea / Editor（`AppShell.slint:75`）。
+  它的宽度是**窗口宽 − 侧栏宽**，不是窗口宽。
+- **宽度写法（2026-10-17 的实测回归）**：根组件写 `horizontal-stretch: 1` +
+  `max-width: 100000px`，**不要**写 `width: 100%` 或 `width: parent.width`。百分比和
+  `parent.width` 量的是父元素的全宽，会盖掉布局分给这一格的槽位，多出来的那一截
+  画在窗口外面。`max-width` 抬到 100000px 是 `OrganizerArea` 记下的同一条规则：
+  内容是一个布局的 `Rectangle`，它的 `max-width` 取该布局的首选宽度，不抬起来
+  stretch 因子没有空间可分。
+- 内容区只有一个 `Flickable`，只绑了 `content-height`（`content-col.preferred-height`），
+  **没有横向滚动**。这条决定了上面那段的严重性：比视口宽的内容不是「往右滚一点就
+  看得到」，而是**永远看不到**。列宽 = `parent.width − spacing-lg × 2`，左缩进
+  `spacing-xl`；列内还有 `padding: spacing-md`，所以同一列里再写 `width: parent.width`
+  会多出 24px（`SettingsTabs` 与同步/MCP 两个包装 `VerticalLayout` 都栽过一次）。
+- 关闭路径：底部「完成」按钮和搜索框的 `key-pressed(Escape)` 都走
+  `settings-close-requested`；点页面别处不会关掉它（不是弹窗，没有 outside-click），
+  但侧栏选页面会先关它再跳转（`controller.rs` 的 `on_node_clicked`）。打开时
+  **不**自动聚焦搜索框。
 - `settings-tab` 在关闭后**不清零**：tab 是位置，不是草稿。
 
 ## 二、Tab 与搜索的显示规则
@@ -42,10 +50,11 @@
 - 长路径（数据文件夹）必须 `wrap: true`——elide 截掉的恰恰是辨认文件夹的尾巴。
 - `CopyableText` **不声明自己的 TouchArea**（一层盖在输入框上的 TouchArea 会把
   点击和拖选一起吃掉）。
-- **要离开本机的文字必须配「复制」按钮**（ADR-0156）：设置弹窗是 `PopupWindow`，
-  只带一个 0×0 focus-proxy，弹窗内的只读 `TextInput` 拿不到焦点就划不出选区——
-  「可选可粘」对弹窗其实不成立。MCP 页的两段配置和给 Agent 的提示词各有一个
-  `复制`，走 `platform::copy_to_clipboard`（Win32 FFI），成败都写 `db-notice`。
+- **要离开本机的文字必须配「复制」按钮**（ADR-0156）：这条规则定下来时设置页还是一个
+  只带 0×0 focus-proxy 的 `PopupWindow`，弹窗内的只读 `TextInput` 拿不到焦点就划不出
+  选区——「可选可粘」对弹窗其实不成立。今天它是整页、输入框能拿到焦点，按钮照旧留着。
+  MCP 页的两段配置和给 Agent 的提示词
+  各有一个 `复制`，走 `platform::copy_to_clipboard`（Win32 FFI），成败都写 `db-notice`。
 
 ## 四、六个 tab 的内容清单
 
@@ -55,8 +64,8 @@
 | 通用 | 三个开关（启动输入框 / Alt+N / Alt+M）+ 一条说明 + 局域网只读共享开关 + MCP 开关与说明 + 存储块 | 本文件；存储块三按钮走 Rust |
 | 同步 | 整节委托给 `SyncPage`（设备 / 统计 / 日志三个分段） | `SyncPage.slint`；节只负责关键词 |
 | MCP | 整节委托给 `McpPage`：开关 + 状态句 +（期望≠运行时）「立即重启」；两段客户端配置各带「复制」；「给 Agent 的提示词」+「复制」；调用日志（最近 50 条，可清空） | `McpPage.slint`；文字全部 Rust 推送，节只负责关键词 |
-| 快捷键 | `ShortcutRow` 单列表（keys 列 mono、108px 固定宽） | 本文件，纯展示 |
-| 关于 | 版本、渲染器 | 本文件；渲染器是有意不进侧栏页脚的 |
+| 快捷键 | `ShortcutRow` 单列表（keys 列 mono、**140px** 固定宽：108px 装不下 `Ctrl+B / I / E / M`，`TextInput` 不裁剪，直接压在标签上） | 本文件，纯展示 |
+| 关于 | 版本、渲染器（标签列 56px + `spacing-md`，值列 stretch） | 本文件；渲染器是有意不进侧栏页脚的 |
 
 存储块的规则：数据文件夹在 `storage-available == false`（内存会话）时显示
 「内存中运行 — 未挂载数据库」并把三个按钮**整个藏起**（条件子元素，不是 visible——

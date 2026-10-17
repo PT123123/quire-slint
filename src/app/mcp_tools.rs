@@ -109,7 +109,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "list_notes",
-            description: "列出整理器的笔记（含在回收站里的，用 include_trashed 控制）。",
+            description: "列出整理器的笔记（含在回收站里的，用 include_trashed 控制）。后续笔记操作使用 note_id。",
             input_schema: schema(
                 json!({ "include_trashed": { "type": "boolean", "description": "默认 false，只列未删除的" } }),
                 &[],
@@ -117,12 +117,12 @@ pub fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "create_note",
-            description: "新建一条笔记。tags 用逗号分隔。",
+            description: "新建一条笔记。返回 note_id；标题不能换行；tags 用逗号分隔，逗号间可保留空格。",
             input_schema: schema(
                 json!({
                     "title": { "type": "string" },
                     "body": { "type": "string" },
-                    "tags": { "type": "string", "description": "逗号分隔，如 \"工作,项目\"" }
+                    "tags": { "type": "string", "description": "逗号分隔，如 \"Machine Learning,项目\"" }
                 }),
                 &["title"],
             ),
@@ -158,7 +158,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "list_tasks",
-            description: "列出整理器的任务（含回收站的，用 include_trashed 控制）。返回清单 id、标题、备注、截止日、优先级、完成状态。",
+            description: "列出整理器的任务（含回收站的，用 include_trashed 控制）。返回 task_id；后续任务操作使用 task_id。",
             input_schema: schema(
                 json!({ "include_trashed": { "type": "boolean" } }),
                 &[],
@@ -166,7 +166,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "create_task",
-            description: "新建一个任务（默认进收集箱）。priority ∈ none/low/medium/high，due 是 YYYY-MM-DD，tags 逗号分隔。",
+            description: "新建一个任务（默认进收集箱）。返回 task_id；标题不能换行。priority ∈ none/low/medium/high，due 是 YYYY-MM-DD，tags 用逗号分隔，逗号间可保留空格。",
             input_schema: schema(
                 json!({
                     "title": { "type": "string" },
@@ -359,6 +359,7 @@ const WRITES: [&str; 8] = [
 fn note_row(n: &crate::core::organizer::Note) -> Value {
     json!({
         "id": n.id.0,
+        "note_id": n.id.0,
         "title": n.title,
         "body": n.body,
         "tags": n.tags,
@@ -380,15 +381,24 @@ fn list_notes(state: &Rc<AppState>, include_trashed: bool) -> Result<Value, Stri
 }
 
 fn create_note(state: &Rc<AppState>, title: &str, body: &str, tags: &str) -> Result<Value, String> {
+    let title = single_line_title(title)?;
     let id = state.org_create_note().ok_or("笔记创建失败。")?;
-    let _ = state.org_note_title(id, title.to_string());
+    let _ = state.org_note_title(id, title.clone());
     if !body.is_empty() {
         let _ = state.org_note_body(id, body.to_string());
     }
     if !tags.trim().is_empty() {
         let _ = state.org_note_tags(id, tags.to_string());
     }
-    Ok(json!({ "id": id }))
+    Ok(json!({ "id": id, "note_id": id, "title": title }))
+}
+
+fn single_line_title(title: &str) -> Result<String, String> {
+    if title.contains('\r') || title.contains('\n') {
+        Err("标题不能包含换行符。".into())
+    } else {
+        Ok(title.to_string())
+    }
 }
 
 fn update_note(state: &Rc<AppState>, id: i64, args: &Value) -> Result<Value, String> {
@@ -396,7 +406,7 @@ fn update_note(state: &Rc<AppState>, id: i64, args: &Value) -> Result<Value, Str
         return Err(format!("笔记 {id} 不存在。"));
     }
     if let Some(t) = arg_opt_str(args, "title") {
-        state.org_note_title(id, t.to_string());
+        state.org_note_title(id, single_line_title(t)?);
     }
     if let Some(b) = arg_opt_str(args, "body") {
         state.org_note_body(id, b.to_string());
@@ -428,6 +438,7 @@ fn restore_note(state: &Rc<AppState>, id: i64) -> Result<Value, String> {
 fn task_row(t: &crate::core::organizer::Task) -> Value {
     json!({
         "id": t.id.0,
+        "task_id": t.id.0,
         "list": t.list.0,
         "title": t.title,
         "notes": t.notes,
@@ -452,7 +463,7 @@ fn list_tasks(state: &Rc<AppState>, include_trashed: bool) -> Result<Value, Stri
 }
 
 fn create_task(state: &Rc<AppState>, args: &Value) -> Result<Value, String> {
-    let title = arg_str(args, "title")?;
+    let title = single_line_title(arg_str(args, "title")?)?;
     let list = args.get("list_id").and_then(Value::as_i64).unwrap_or(0);
     if list < 0 || (list != 0 && !state.org_catalog().lists.iter().any(|row| row.id.0 == list as u64)) {
         return Err(format!("清单 {list} 不存在。"));
@@ -460,19 +471,13 @@ fn create_task(state: &Rc<AppState>, args: &Value) -> Result<Value, String> {
     let priority = arg_opt_str(args, "priority")
         .map(priority_slot)
         .transpose()?;
-    let tags: Vec<String> = arg_opt_str(args, "tags")
-        .map(|tg| {
-            tg.split(|c| c == ',' || c == '，')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
     let id = state
-        .org_create_task_tagged(list, tags)
+        .org_create_task_tagged(list, Vec::new())
         .ok_or("任务创建失败。")?;
     state.org_task_title(id, title.to_string());
+    if let Some(tags) = arg_opt_str(args, "tags") {
+        state.org_task_tags(id, tags.to_string());
+    }
     if let Some(n) = arg_opt_str(args, "notes") {
         if !n.is_empty() {
             state.org_task_notes(id, n.to_string());
@@ -486,7 +491,7 @@ fn create_task(state: &Rc<AppState>, args: &Value) -> Result<Value, String> {
     if let Some(priority) = priority {
         state.org_task_priority(id, priority);
     }
-    Ok(json!({ "id": id }))
+    Ok(json!({ "id": id, "task_id": id, "title": title }))
 }
 
 fn update_task(state: &Rc<AppState>, id: i64, args: &Value) -> Result<Value, String> {
@@ -494,7 +499,7 @@ fn update_task(state: &Rc<AppState>, id: i64, args: &Value) -> Result<Value, Str
         return Err(format!("任务 {id} 不存在。"));
     }
     if let Some(t) = arg_opt_str(args, "title") {
-        state.org_task_title(id, t.to_string());
+        state.org_task_title(id, single_line_title(t)?);
     }
     if let Some(n) = arg_opt_str(args, "notes") {
         state.org_task_notes(id, n.to_string());

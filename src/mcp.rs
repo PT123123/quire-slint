@@ -112,7 +112,7 @@ pub fn handle_message(
         })),
         "tools/call" => {
             if id.is_none() {
-                return Reply::Silent; // 通知形式的 call 不回答
+                return Reply::Error(-32600, "tools/call requires a JSON-RPC id".into());
             }
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -239,16 +239,20 @@ impl McpServer {
         }
         let authorized = headers
             .get("authorization")
-            .map(|v| v.trim_start_matches("Bearer ").trim() == self.token)
+            .map(|v| {
+                let mut parts = v.splitn(2, char::is_whitespace);
+                matches!(parts.next(), Some(scheme) if scheme.eq_ignore_ascii_case("bearer"))
+                    && parts.next().is_some_and(|credential| credential.trim() == self.token)
+            })
             .unwrap_or(false)
             || headers.get("x-quire-token").map(|v| v.as_str() == self.token).unwrap_or(false);
 
         let path = path.split('?').next().unwrap_or(path);
-        if path != "/mcp" {
-            return respond(&stream, 404, "application/json", "{\"error\":\"not found\"}");
-        }
         if !authorized {
             return respond(&stream, 401, "application/json", "{\"error\":\"unauthorized\"}");
+        }
+        if path != "/mcp" {
+            return respond(&stream, 404, "application/json", "{\"error\":\"not found\"}");
         }
         if method != "POST" {
             // SSE 长连接（GET）这个实现不支持：客户端按规范的回退
@@ -582,7 +586,7 @@ mod tests {
         assert!(buf.contains("401"), "{buf}");
 
         let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        let req = "GET /other HTTP/1.1\r\n\r\n";
+        let req = "GET /other HTTP/1.1\r\nAuthorization: Bearer secret\r\n\r\n";
         s.write_all(req.as_bytes()).unwrap();
         let mut buf = String::new();
         BufReader::new(s).read_to_string(&mut buf).unwrap();

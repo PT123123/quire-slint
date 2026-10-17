@@ -128,14 +128,20 @@ component ShortcutRow inherits Rectangle {
     height: 20px;
 
     HorizontalLayout {
+        // 140 px, not the 108 this row used to give the chord column: the
+        // longest chord here is "Ctrl+B / I / E / M", and a `TextInput` that
+        // is narrower than its own text draws over its neighbour rather than
+        // clipping — the label started inside the keys.
         CopyableText {
-            width: 108px;
+            width: 140px;
             text: root.keys;
             font-size: Typography.size-caption;
             ink: Colors.text-secondary;
             mono: true;
         }
         CopyableText {
+            horizontal-stretch: 1;
+            max-width: 100000px;
             text: root.label;
             font-size: Typography.size-ui;
             ink: Colors.text-secondary;
@@ -287,8 +293,12 @@ component SettingsTabs inherits Rectangle {
     in property <int> selected;
     callback picked(int);
 
-    width: 100%;
+    // Not `width: 100%`: the content column has padding, so a percentage here
+    // measures the column *including* its padding and hangs the strip's last
+    // segment over the page edge. Stretch plus a raised ceiling is what lets
+    // the layout hand this row the width it actually allocated.
     horizontal-stretch: 1;
+    max-width: 100000px;
     height: 30px;
     border-radius: Theme.radius-sm;
     border-width: 1px;
@@ -331,8 +341,17 @@ component SettingsTabs inherits Rectangle {
 }
 
 export component SettingsDialog inherits Rectangle {
-    width: 100%;
-    height: 100%;
+    // `OrganizerArea`'s rule, restated because this page is mounted in the same
+    // `HorizontalLayout` beside the sidebar: a `width: 100%` binding here wins
+    // over the slot the layout allocates, so the page was laid out at the whole
+    // window's width and its right 260 px — the 关于 tab, the 复位 button, the
+    // last column of theme cards — was drawn past the window edge, inside a
+    // Flickable that has no horizontal scroll to reach it.
+    horizontal-stretch: 1;
+    max-width: 100000px;
+    vertical-stretch: 1;
+    max-height: 100000px;
+
     Rectangle {
         width: parent.width;
         height: parent.height;
@@ -621,7 +640,8 @@ export component SettingsDialog inherits Rectangle {
                     ? UIState.settings-tab == 2
                     : UIState.settings-match("同步 局域网 设备 统计 日志 自动同步 间隔 立即同步 端口 5878 本机 淘汰"))
                 : VerticalLayout {
-                    width: parent.width;
+                    horizontal-stretch: 1;
+                    max-width: 100000px;
                     spacing: Theme.spacing-md;
                     Rectangle {
                         height: 1px;
@@ -640,7 +660,8 @@ export component SettingsDialog inherits Rectangle {
                     ? UIState.settings-tab == 3
                     : UIState.settings-match("mcp ai agent 人工智能 接口 端口 5880 客户端 配置 令牌 token 日志 回收站 笔记 任务"))
                 : VerticalLayout {
-                    width: parent.width;
+                    horizontal-stretch: 1;
+                    max-width: 100000px;
                     spacing: Theme.spacing-md;
                     Rectangle {
                         height: 1px;
@@ -700,35 +721,44 @@ export component SettingsDialog inherits Rectangle {
                 : SettingsSection {
                     label: "关于";
                     open: true;
+                    // A label column of its own: with no spacing and no width on
+                    // the label, each value was drawn on top of the word in
+                    // front of it ("版本Quire 0.1.36").
                     HorizontalLayout {
+                        spacing: Theme.spacing-md;
                         Text {
+                            width: 56px;
                             text: "版本";
                             font-family: Typography.ui-font;
                             font-size: Typography.size-ui;
                             color: Colors.text-secondary;
                             vertical-alignment: center;
                         }
-                        Rectangle { width: 0px; }
                         // Copyable (ADR-0135): the version is what a bug report is headed
                         // with, and the 关于 section is where a user is sent to find it.
                         CopyableText {
+                            horizontal-stretch: 1;
+                            max-width: 100000px;
                             text: "Quire " + UIState.app-version;
                         }
                     }
                     HorizontalLayout {
+                        spacing: Theme.spacing-md;
                         Text {
+                            width: 56px;
                             text: "渲染器";
                             font-family: Typography.ui-font;
                             font-size: Typography.size-ui;
                             color: Colors.text-secondary;
                             vertical-alignment: center;
                         }
-                        Rectangle { width: 0px; }
                         // Copyable for the same reason, and mono because it is an
                         // identifier rather than a sentence. Kept out of the rail's
                         // footer on purpose: a renderer name is support
                         // information, not chrome.
                         CopyableText {
+                            horizontal-stretch: 1;
+                            max-width: 100000px;
                             text: UIState.renderer-name;
                             font-size: Typography.size-caption;
                             mono: true;
