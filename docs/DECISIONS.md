@@ -770,10 +770,52 @@ exits.
 
 | running | launching | what happens |
 |---|---|---|
-| nothing | any | this process becomes the session |
+| nothing | any | this process claims the channel and becomes the session |
 | `v` | `v` | 已在运行 dialog, this launch exits |
-| `older` | `newer` | 已更新 dialog naming the version replaced, this process starts |
+| `older` | `newer` | the old one is asked to leave; once it has gone this process **claims the channel** and starts, with a 已更新 dialog naming the version replaced. A handover that does not finish is this launch exiting, not a second session starting |
 | `newer` | `older` | 已有更新版本 dialog, this launch exits |
+
+**Amended 2026-10-20 — a replacement that does not own the channel is how two
+instances ended up running.** The rule above was implemented as *one* branch that
+claims the pipe: the "nothing was listening" arm. `Replacing` asked the older
+instance to leave, waited for it to be gone, and then went straight to building a
+window — never serving the name itself. A later launch therefore asked `version`,
+heard nothing, took that as "nothing is running", claimed the name, and became a
+second session beside the first, with both holding the same library. Observed on
+this machine on two live `quire-slint-0.1.41` processes (pid 115780, pid 115392,
+25 s apart): the log shows the first starting right after a clean `session ended`
+— i.e. it arrived by replacing — and the second starting with
+`the previous session aborted`, which is the still-running predecessor's missing
+clean-exit record read as a crash. The channel answered `version 0.1.41` afterwards,
+but only for the second process; the first was unreachable to `--quit`, to the
+tray's 退出-equivalent and to every later deploy, which is the property ADR-0105
+exists to provide.
+
+**So: the process that ends up being the session owns the name, whoever it
+displaced.** `claim` returns `None` only after `serve_named` succeeded for this
+process, which makes the return value a promise rather than a verdict about the
+other side, and takes the "may I start?" decision away from the caller — `main`
+now reads one thing, `Some(verdict) = do not open a database or a window`. Two
+leaks closed with it, both in the same handover: a quit the old instance
+**refused** (`err`, or no answer) used to announce "旧版本未能退出" and start
+anyway, and a quit accepted but not finished inside `SESSION_END_TIMEOUT` used to
+start on the strength of the `ok` alone. Both now exit, with wording that says
+which half happened — only the accepted-but-still-leaving one is worth retrying a
+moment later, and the naming is what tells them apart.
+
+**Rejected: a named mutex or a PID file as a second guard beside the pipe** (see
+below) — the hole was never "the pipe can't tell who owns it", it was one arm that
+did not use it. **Rejected: letting a replacement re-claim the name later, once
+its window exists** — the next launch can arrive while that window is still being
+built, which is the same race with more surface.
+
+The gate: `platform::quit::tests::a_replacement_leaves_this_instance_owning_the_channel`
+drives the whole handover against a test pipe and asserts that the new instance
+answers `version` with its own build, then that a third launch of that same build
+is refused. Its positive control is the older instance's answer, read before the
+handover; with the `serve_named` call removed from the replacing arm the test fails
+with `no instance answered … (os error 2)` — the live symptom, the channel gone
+silent while an instance holds a window.
 
 **It reuses ADR-0105's channel rather than adding a second mechanism.** That pipe
 was built so a deploy could end a running session through the app's own exit
@@ -8429,3 +8471,59 @@ FileVersion `0.1.40.0`、本轮时间戳），启动后从**用户自己的库**
 否则旧 WAL 会把新副本判成 malformed）、`armstat.mjs`（谷底漂移）、`dbpeek3.mjs` / `peersize.mjs` / `loggrep.mjs`。
 仍未做：真机双设备互拨（本轮全是单机的回环与黑洞夹具）、6.7 GB 那次运行的一手堆画像（已无从取）。
 
+
+## ADR-0166 · 侧边栏开合的「卡」是线性补间，不是掉帧（0.1.40 工作树）
+
+报的是「侧边栏展开关闭感觉有点卡卡的」。**卡**这个词同时指向两件事——帧没跟上（掉帧）和帧跟上了但
+速度不对（缓动），两者的修法相反，所以先把它拆开量，而不是先改看着像的那处。
+
+**量出来的两件事：**
+
+1. **帧没掉。** 临时探针（16 ms 定时器记事件循环自己的间隔，每 25 拍程序化翻一次 `sidebar-open`，
+   跑完 8 个来回自退）在**release 构建 + 用户自己的库**上读到：
+   `frames=200 p50=16510us p90=16755us p99=17498us max=983918us wall=4264ms`。
+   p50/p90/p99 全贴在 16.5~17.5 ms，也就是 60 fps 满帧；唯一的 984 ms 是启动后第一拍，不在动画里。
+   探针量完即删，没留在树里。
+2. **补间是直的。** `quire-shot --motion sidebar-toggle --frame-ms 20` 采 30 帧，用
+   `benchmarks/scripts/motion_edges.ps1` 读侧栏右缘：改前每 20 ms 恒定
+   −8,−12,−12,−12,−11,−12,−12,−12,−11,−12（位移匀速、速度图是矩形），改后是
+   −2,−7,−11,−16,−19,−20,−19,−16,−11,−8 的钟形。
+
+**根因。** Slint 的 `animate` 不写 `easing:` 就是**线性**：起步瞬间到全速、收尾瞬间停住。窗口本身是
+GPU 合成、帧帧准时，但眼睛读的是速度曲线，所以 220 ms 的直边看起来就像机器卡了一下——`Theme.slint`
+的时长档位（80/140/220/320）管的是**多久**，管不到**怎么动**。
+
+**决定：`Sidebar.slint` 的 `animate width` 补上 `easing: ease-in-out`**（`cubic-bezier(.42,0,.58,1)`），
+和 `OrganizerArea.slint` 已有的 `animate height, opacity { easing: ease-out }` 用同一套语言。时长不动：
+220 ms 是 `duration-normal` 那一档，改它等于改设计令牌。
+
+**顺手钉的一条规矩（写进 UI_ARCHITECTURE.md「Motion capture」）：** 布局类 `animate` 的内容宽度绑目标值、
+不绑动画中的 `parent.width`，让外层 `clip` 在动画边缘裁——抽屉从遮罩下滑出，而不是一列文字被挤扁。
+侧栏本来就是这个形状（`VerticalLayout { width: Theme.sidebar-width }`），本轮只是把**为什么**写进注释，
+因为改成 `parent.width` 语法同样合法、而且正好是「卡」的第二种成因。
+
+**验证：** `just clips` 的 `sidebar-toggle` 门（distinct ≥ 5）通过：`194.4 KB frames=14 distinct=13 ok`；
+`--frame-ms 20` 的细采样给出上面那条钟形曲线；静止帧与改前同构（只裁不动版）。
+探针那条 `--motion-probe` 已从 `main.rs` 撤干净，树里只剩 `Sidebar.slint`、`motion_edges.ps1` 和这两处文档。
+未做：把这版装到机器上再用（按规矩装机要先点头）。
+
+## ADR-0167 · 默认的 workshop 部署是 dev 档案（0.1.41）
+
+**改了什么。** `just deploy-workshop` 现在跑 dev 构建，原来那条 `--release` 改名
+`just deploy-workshop-release`。`install\` 下两个脚本按同一含义对调（`deploy-workshop.ps1` = dev，
+`deploy-workshop-release.ps1` = release），仪式一步没动：bump patch → build → 单独提交并推送 bump →
+复制到 `C:\workshop\quire-slint-<version>\`。
+
+**为什么默认是快的那条。** 这条命令被叫起来的意图从来是「货架上要一个能跑的当前版本」，不是「货架上
+那份字节的体积要过审」。而 `--release` 的 `[profile.release]`（`codegen-units = 1` + thin LTO）在
+**重复构建**里实测 9~11 分钟（`docs/BUILD_PERFORMANCE.md`），dev 只要重编 `quire` 一个 crate + 约 11 秒
+链接。名字里带 `-fast` 的那条才是多数人要的，所以把不带后缀的名字给它——**默认值应该长在常用意图上，
+不是长在历史顺序上**。要审过体积的那份 exe 时，`-release` 这个后缀本身就是提示。
+
+**顺带纠正的两处口径。** `docs/BUILD_PERFORMANCE.md` 与 `docs/PERFORMANCE.md` 的 *Build cost* 一节
+开头都写着「`just deploy-workshop` 要 2 分半」，那是 release 那条的代价，已改名并补一句默认是 dev；
+`install\release-publish.ps1` 头注释里「另一扇门」现在同时指两扇。CHANGELOG 与 DECISIONS 里那些
+`deploy-workshop-fast` 的历史条目**不改**——那是当时真实执行过的命令名，改了就成了伪造现场。
+
+**验证：** `just --list` 只剩 `deploy-workshop` 与 `deploy-workshop-release` 两条；本轮 0.1.41 由
+`just deploy-workshop`（dev）实际打出来并归档，产物从 `C:\workshop` 读回。

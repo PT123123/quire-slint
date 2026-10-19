@@ -16,6 +16,10 @@
 //     whole ownership rule — the first process to name the pipe gets it, and a
 //     second one fails to create it instead of silently becoming another
 //     instance of the same name. No mutex, no PID file.
+//   * Every launch that ends up being the session creates it, including the one
+//     that arrived by displacing an older build. Owning the name is what a later
+//     launch reads a version from, so a session that never served is invisible
+//     to the rule that is supposed to stop a second one; see [`claim`].
 //   * The client is std only. A named pipe is openable as a file, so
 //     `OpenOptions::open(r"\\.\pipe\quire-desktop-quit")` *is* CreateFileW.
 //   * Two hand-declared `extern "system"` functions and no `windows` crate —
@@ -55,32 +59,67 @@ const SESSION_END_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 
 /// What a launching process decided to do about the instance it found
 /// (ADR-0136). The decision is made once, before any session starts, so the
-/// answer is one value rather than a set of booleans to misread in pairs.
-#[derive(Debug, PartialEq, Eq)]
+/// answer is one value rather than a set of booleans to misread in pairs — and
+/// the one verdict with more than a yes/no in it is `Replacing`, whose two flags
+/// are the two halves of a handover that can each fail on its own.
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum SecondLaunch {
-    /// Nothing was listening: this process owns the channel and becomes the one
-    /// session. The normal path, and the only one that reaches a window.
+    /// Nothing was listening, and this process owns the channel. It is carried
+    /// only for the match in `main`, which reads a verdict here and says nothing;
+    /// a launch that owns the session is never announced.
     Primary,
     /// An instance of the **same** build is running. It keeps running; this
     /// process says so and exits, so two sessions never share one database.
+    /// `version` is `unknown` when this process could not read one but also
+    /// could not own the name — a peer is there and this is the safe thing to say.
     AlreadyRunning { version: String },
     /// An **older** build is running. Same outcome as [`Self::AlreadyRunning`] —
     /// the running one is not displaced by a downgrade — and the same notice,
     /// which names the running version so the user can see *why* nothing
     /// happened.
     RunningIsNewer { version: String },
-    /// A **newer** build is running, so the old one was told to end its own
-    /// session and this process carries on to start. `quit_accepted` is false
-    /// when the request went out and nothing answered: the newer instance then
-    /// keeps running, and this process must not claim to have replaced it.
+    /// An **older** build is running, so the old one was asked to end its own
+    /// session. `Replacing` is only the *ask* — this process becomes the session
+    /// when both halves of the handover happened, and [`claim`] returns `None`
+    /// for it then, the same as for a launch that found nothing running.
+    ///
+    /// `quit_accepted` is false when the request went out and nothing answered
+    /// `ok`: the old instance is still running, so this launch has no business
+    /// starting beside it.
+    ///
+    /// `session_ended` is false when the old instance accepted but the wait for
+    /// it ([`SESSION_END_TIMEOUT`]) ran out: it is still on its way out, still
+    /// holding the library, and starting here would be a second writer. A quit
+    /// that was accepted but has not finished is a different thing from a quit
+    /// that was refused, and the two need telling apart because only one of them
+    /// is worth retrying once the old window closes.
     ///
     /// `replaced` is the version that was asked to leave, carried so the notice
     /// can name it — a replacement the user was never told about is the one
     /// outcome of this rule that looks like the app lost its window by itself.
     Replacing {
         quit_accepted: bool,
+        session_ended: bool,
         replaced: String,
     },
+}
+/// What [`claim_on`] decided this launch is allowed to do, before it knows
+/// whether the channel will actually let it.
+///
+/// The two are separate questions and the bug this enum exists to keep apart was
+/// answering only the first one: a replacement that read the old instance out of
+/// the way used to go on to build a window *without owning the channel*, so the
+/// next launch asked `version`, heard nothing, declared itself the session and
+/// became a second one beside it.
+enum Intention {
+    /// Nothing was listening: this launch may claim the channel.
+    Open,
+    /// An older instance left, and this launch may claim the channel it freed.
+    /// Carries the version that left, for the notice.
+    Replaced(String),
+    /// This launch is not the session. The verdict says why, and why is the
+    /// message the user gets.
+    Blocked(SecondLaunch),
 }
 /// Work out what this launch should do, and act on it.
 ///
@@ -89,19 +128,26 @@ pub enum SecondLaunch {
 /// to go away must not open a database first, because opening one is a second
 /// writer on a file the live instance already has.
 ///
+/// The return is the answer to one question — *may this process become the
+/// session?* — and `None` is the only yes. It is also a promise: a `None` means
+/// [`imp::serve_named`] ran for this process and the channel now answers
+/// `version` with its build, which is what the next launch will read. A `Some`
+/// was already announced and the caller must not open a database or a window.
+///
 /// The rule is one comparison of two versions, and the direction is the whole of
 /// it:
 ///
-///   * nothing running → `None` (this process owns the channel and goes on to
-///     build a window);
+///   * nothing running → claim the channel, go on to build a window;
 ///   * same build → tell the user, exit. **Both** halves matter: a second
 ///     session would be a second writer, and a silent one is how the user finds
 ///     out.
 ///   * launching is **newer** → ask the old one to exit through its own quit
-///     channel (so its flush and clean-exit record run, ADR-0105) and carry on
-///     starting. This is what makes a deploy land on a running install: the old
-///     exe releases its files without a kill, which is the property ADR-0105 was
-///     built for and what the deploy script has been asking for by hand.
+///     channel (so its flush and clean-exit record run, ADR-0105), *wait for it
+///     to be gone*, then claim the channel it freed and carry on starting. This
+///     is what makes a deploy land on a running install: the old exe releases its
+///     files without a kill, which is the property ADR-0105 was built for and
+///     what the deploy script has been asking for by hand. If the handover does
+///     not complete, this launch exits instead of starting beside it.
 ///   * launching is **older** → the running one wins. A downgrade must not
 ///     displace a newer install; the user is told and this process exits.
 ///
@@ -113,65 +159,92 @@ pub enum SecondLaunch {
 /// loop the caller's window runs on, and this claim is made *before* that window
 /// exists. The caller is what knows whether it is up yet — see `main`, which
 /// answers `false` for the window between the claim and `ui.run()` rather than
-/// posting to a loop that has not started. `announce` is how a non-`Primary`
-/// answer reaches the user; it is a callback rather than a print because that
-/// half of the rule is a window's job, not this module's.
+/// posting to a loop that has not started. `announce` is how a launch that is not
+/// the session reaches the user; it is a callback rather than a print because
+/// that half of the rule is a window's job, not this module's. A replacement
+/// announces too — it is the one verdict that takes a window away.
 pub fn claim(
     ours: &str,
     on_quit: impl Fn() -> bool + Send + 'static,
     announce: impl Fn(&SecondLaunch),
 ) -> Option<SecondLaunch> {
-    match imp::request_version(PIPE_NAME) {
-        // Nothing is listening. Claim the name and become the one session. The
-        // claim is the last thing that can fail, and it is reported rather than
-        // assumed: a pipe this process could not own is a pipe a second launch
-        // will read a *version* from, which is the one state with no good
-        // answer.
-        Err(_) => {
-            if imp::serve_named(PIPE_NAME, ours, on_quit) {
-                None
-            } else {
-                let blocked = SecondLaunch::AlreadyRunning {
-                    version: "unknown".into(),
-                };
-                announce(&blocked);
-                Some(blocked)
-            }
-        }
+    claim_on(PIPE_NAME, ours, on_quit, announce)
+}
+
+/// [`claim`] with the channel named, so the whole decision table — including the
+/// handover that ends with this process owning it — can be driven against a test
+/// pipe while a real Quire is running on [`PIPE_NAME`].
+fn claim_on(
+    pipe: &str,
+    ours: &str,
+    on_quit: impl Fn() -> bool + Send + 'static,
+    announce: impl Fn(&SecondLaunch),
+) -> Option<SecondLaunch> {
+    let intention = match imp::request_version(pipe) {
+        // Nothing is listening, so the channel is there for the taking.
+        Err(_) => Intention::Open,
         Ok(running) => {
-            let decision = if ours == running {
-                SecondLaunch::AlreadyRunning { version: running }
+            if ours == running {
+                Intention::Blocked(SecondLaunch::AlreadyRunning { version: running })
             } else if is_newer(ours, &running) {
                 // The old instance ends its own session first, and the answer
                 // decides what this launch claims. `quit` after `version` is a
                 // second exchange on the same pipe, which is why the server
                 // re-creates its instance after every request.
-                let replaced = running.clone();
-                let accepted = imp::request_quit(PIPE_NAME).is_ok();
-                if accepted {
-                    // The `ok` says the old session *scheduled* its exit — its
-                    // final flush and clean-exit record are still in flight
-                    // while this process is already starting. Opening the
-                    // database here is what races both halves of that handover:
-                    // a load that reads before the last flush restores a stale
-                    // page, and this session's first open then writes that
-                    // stale "current-page" over the real one — so every
-                    // relaunch lands one session behind. The wait is bounded,
-                    // so an instance that wedges between scheduling its quit
-                    // and running it costs the launch the wait and no more.
-                    imp::wait_for_session_end(PIPE_NAME, SESSION_END_TIMEOUT);
-                }
-                SecondLaunch::Replacing {
-                    quit_accepted: accepted,
-                    replaced,
+                let accepted = imp::request_quit(pipe).is_ok();
+                // The `ok` says the old session *scheduled* its exit — its final
+                // flush and clean-exit record are still in flight while this
+                // process is deciding what to do. Opening the database on the
+                // strength of that `ok` is what races both halves of the
+                // handover: a load that reads before the last flush restores a
+                // stale page, and this session's first open then writes that
+                // stale "current-page" over the real one — so every relaunch
+                // lands one session behind. The wait is bounded, and what the
+                // bound now decides is whether this launch starts at all.
+                let ended = accepted && imp::wait_for_session_end(pipe, SESSION_END_TIMEOUT);
+                match (accepted, ended) {
+                    (true, true) => Intention::Replaced(running),
+                    (quit_accepted, session_ended) => {
+                        Intention::Blocked(SecondLaunch::Replacing {
+                            quit_accepted,
+                            session_ended,
+                            replaced: running,
+                        })
+                    }
                 }
             } else {
-                SecondLaunch::RunningIsNewer { version: running }
-            };
-            announce(&decision);
-            Some(decision)
+                Intention::Blocked(SecondLaunch::RunningIsNewer { version: running })
+            }
         }
+    };
+    if let Intention::Blocked(verdict) = intention {
+        announce(&verdict);
+        return Some(verdict);
     }
+    // Both remaining intentions own the session, and owning it means *serving*
+    // it: the claim is what the next launch reads, so a launch that came in by
+    // replacing an older one has to answer for itself afterwards. Claiming here
+    // rather than on the way in is also what makes the wait above honest — the
+    // name is only taken once the previous owner has let go of it.
+    if !imp::serve_named(pipe, ours, on_quit) {
+        // Something else took the name in the gap: the old instance came back,
+        // or a third launch got in first. Either way this process is a second
+        // session, and a version it cannot read is a reason to say so rather
+        // than to start anyway.
+        let blocked = SecondLaunch::AlreadyRunning {
+            version: "unknown".into(),
+        };
+        announce(&blocked);
+        return Some(blocked);
+    }
+    if let Intention::Replaced(replaced) = intention {
+        announce(&SecondLaunch::Replacing {
+            quit_accepted: true,
+            session_ended: true,
+            replaced,
+        });
+    }
+    None
 }
 /// Compare two dotted version strings by their numeric parts.
 ///
@@ -220,6 +293,7 @@ mod imp {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
+    use std::sync::atomic::AtomicBool;
 
     // CreateNamedPipeW / ConnectNamedPipe
     const INVALID_HANDLE_VALUE: isize = -1;
@@ -296,6 +370,32 @@ mod imp {
         version: &str,
         on_quit: impl Fn() -> bool + Send + 'static,
     ) -> bool {
+        // A real session never raises this: it keeps answering `version` until
+        // its own process is gone, which is what makes the silence
+        // `wait_for_session_end` watches for mean "its handles are closed"
+        // rather than "the server got tired of the name".
+        serve_loop(pipe, version, on_quit, std::sync::Arc::new(AtomicBool::new(false)))
+    }
+
+    /// [`serve_named`] with the leave signal handed to the caller, so a test can
+    /// play an instance that goes away when asked. `on_quit` raises the flag the
+    /// way a scheduled exit does, and the name is then let go.
+    #[cfg(test)]
+    pub fn serve_named_leaving(
+        pipe: &str,
+        version: &str,
+        on_quit: impl Fn() -> bool + Send + 'static,
+        leaving: std::sync::Arc<AtomicBool>,
+    ) -> bool {
+        serve_loop(pipe, version, on_quit, leaving)
+    }
+
+    fn serve_loop(
+        pipe: &str,
+        version: &str,
+        on_quit: impl Fn() -> bool + Send + 'static,
+        leaving: std::sync::Arc<AtomicBool>,
+    ) -> bool {
         let name = wide(pipe);
         let Some(first) = create_instance(&name) else {
             return false;
@@ -341,6 +441,12 @@ mod imp {
                     // has not read yet — which is why this is a close and not
                     // `DisconnectNamedPipe`, which can drop the answer.
                     drop(file);
+                    // The instance this process played is over, and the name goes
+                    // with it — which is the whole of the handover a replacing
+                    // launch waits for.
+                    if leaving.load(std::sync::atomic::Ordering::SeqCst) {
+                        break;
+                    }
                     // A quit that failed to schedule leaves the app running, so
                     // the channel has to outlive the request that carried it.
                     let Some(next) = create_instance(&name) else {
@@ -516,7 +622,7 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
 
     /// The whole round trip in one process, which is the only way to test two
@@ -576,6 +682,89 @@ mod tests {
         // a newer build asking the old one to leave
         imp::request_quit(&name).expect("the channel must survive a version ask");
         assert_eq!(asked.load(Ordering::SeqCst), 1);
+    }
+
+    /// The handover, end to end: a newer launch displaces an older instance and
+    /// must come out the other side **owning the channel**, because that name is
+    /// what the next launch reads. Before this the replacing launch built a window
+    /// without ever serving, so the next launch heard nothing, called itself the
+    /// one session and drew a second window beside it — two writers on one
+    /// library. This is the bug the two live instances on a machine came from.
+    ///
+    /// The positive control is the older instance's own answer: the ask that gets
+    /// this test to `None` is only real if `0.1.11` was answering first, so a
+    /// silent channel can never be what makes the assertion pass.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn a_replacement_leaves_this_instance_owning_the_channel() {
+        let name = format!(r"\\.\pipe\quire-desktop-claim-{}", std::process::id());
+        let leaving = Arc::new(AtomicBool::new(false));
+        let old_leaves = leaving.clone();
+        assert!(
+            imp::serve_named_leaving(&name, "0.1.11", move || {
+                old_leaves.store(true, Ordering::SeqCst);
+                true
+            }, leaving),
+            "the older instance owns the test name"
+        );
+        assert_eq!(
+            imp::request_version(&name).unwrap(),
+            "0.1.11",
+            "control: an older build is the one answering"
+        );
+        let told = std::cell::RefCell::new(Vec::new());
+        let verdict = claim_on(&name, "0.1.12", || true, |v| told.borrow_mut().push(v.clone()));
+        assert!(verdict.is_none(), "a completed replacement becomes the session: {verdict:?}");
+        assert_eq!(
+            *told.borrow(),
+            vec![SecondLaunch::Replacing {
+                quit_accepted: true,
+                session_ended: true,
+                replaced: "0.1.11".into()
+            }],
+            "and it says so once, naming the version that left (ADR-0136)"
+        );
+        assert_eq!(
+            imp::request_version(&name).unwrap(),
+            "0.1.12",
+            "the new session answers for itself — this is the line the bug failed"
+        );
+        // The consequence the user actually sees: a third launch of the same build
+        // is refused instead of becoming a second window.
+        let second = claim_on(&name, "0.1.12", || true, |_| {});
+        assert_eq!(
+            second,
+            Some(SecondLaunch::AlreadyRunning { version: "0.1.12".into() }),
+            "the takeover instance has to stop a second session"
+        );
+    }
+
+    /// The other half: a handover that does **not** complete is not a licence to
+    /// start beside a live instance. A refused quit leaves the old one running and
+    /// leaves the name in its hands, so this launch reports instead of drawing a
+    /// window.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn a_refused_quit_does_not_take_the_channel() {
+        let name = format!(r"\\.\pipe\quire-desktop-claim-refuse-{}", std::process::id());
+        assert!(imp::serve_named(&name, "0.1.20", || false));
+        let told = std::cell::RefCell::new(Vec::new());
+        let verdict = claim_on(&name, "0.1.21", || false, |v| told.borrow_mut().push(v.clone()));
+        assert_eq!(
+            verdict,
+            Some(SecondLaunch::Replacing {
+                quit_accepted: false,
+                session_ended: false,
+                replaced: "0.1.20".into()
+            }),
+            "a quit nothing accepted is not a replacement"
+        );
+        assert_eq!(told.borrow().len(), 1, "and the user is told, not left guessing");
+        assert_eq!(
+            imp::request_version(&name).unwrap(),
+            "0.1.20",
+            "the refused launch must not have taken the name"
+        );
     }
 
     /// A refusal is told apart from an answer, because a caller acting on

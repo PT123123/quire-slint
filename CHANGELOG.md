@@ -2,6 +2,55 @@
 
 ## 构建 (unreleased)
 
+### 单实例：靠「挤掉旧版」上位的实例现在会自己去占有那条 pipe（ADR-0136 修正）
+
+- **两个实例是真的。** 本机同时跑着两个 `quire-slint-0.1.41.exe`（pid 115780 起于
+  17:15:37Z、pid 115392 起于 17:15:53Z，同一个 `%APPDATA%\Quire\quire.db`）。
+  `quire.log` 里 115780 前面是一条干净的 `session ended`（它是挤掉旧版上位的），
+  115392 前面是一条 `the previous session aborted`（它还当那是崩溃，其实那位正在运行）
+- **漏的那一支**：只有「什么都没在跑 → 我来当会话」这一支会建 server。`Replacing`
+  那一支让旧实例退出、等它消失，然后直接建窗，从来没占有过 `\\.\pipe\quire-desktop-quit`。
+  于是下一次启动问 `version` 没人应答 → 自认是唯一会话 → 开出第二个窗口。实测接管完成后
+  那条 pipe 确实有人应答，应答的是后开的那个；先接管的那个对 `--quit`、托盘退出、
+  以后每次部署退旧全部不可达
+- **规则改成**：成为会话的那个进程必须占有通道。`claim` 只在 `serve_named` 成功之后才返回
+  `None`，返回值从「对面是什么情况」变成「我能不能起」；`main` 只看 `Some(verdict)` 就走人
+- **同一支的第二条漏口一起关掉**：旧版本**拒退**（答 `err` 或不答）以前弹完「旧版本未能退出」
+  照样起窗；接受了退出但 8 秒内没退完的也一样起。现在两种都不起，弹的话分别说明是哪一半——
+  只有「已经接受、还在退」这一种是等一会儿再试有意义的
+- 接管这一支建不出通道（名字被别人抢了）时报 `已在运行`，不再默默当自己没看见
+- `AlreadyRunning` 的弹窗不再把内部值 `unknown` 念给用户听，改说「另一个 Quire 已经在运行」
+- **门**：`cargo test --lib platform::quit` 新增 `a_replacement_leaves_this_instance_owning_the_channel`
+  （跑完整接管，断言事后管道报的是新版的版本号、且第三次同样版本的启动被拒）和
+  `a_refused_quit_does_not_take_the_channel`。前者的 control 是接管前旧实例那句 `0.1.11`；
+  把 `serve_named` 那一行短路掉，它红在 `no instance answered … (os error 2)`，
+  就是本机看到的那个症状。全套 218 passed
+- 测试用的 `serve_named_leaving`（`#[cfg(test)]`）只让测试能扮演一个「答应退出就真的撒手」的
+  旧实例。真实会话永远不举那面旗：它要一路应答到自己进程消失为止，否则
+  `wait_for_session_end` 等到的沉默就不等于「库句柄已关」
+- **本机现在这两个实例还在**：修复要下一次构建装机才生效；先手动把托盘里多出来的那个退出
+- **真跑了一腿（另一腿要等发版）**：刚构建的 debug exe 作为第三个进程去撞那条活着的
+  `\\.\pipe\quire-desktop-quit`，带 `--db <一次性库> --auto-exit 12` 做保险。实测
+  8.54 s 后 exit 0（8 秒正好是那条 MessageBox 的自动关窗时间）、`--db` 指向的目录**没有**
+  产生任何库文件（被拒的启动从不打开资料库）、`quire.log` 尾部没有它的任何一行（判定早于
+  日志初始化）、pipe 仍答 `version 0.1.41`、115780 / 115392 两个 pid 原封不动。
+  「新版本挤掉旧版本后由新进程占有通道」这一腿要两个不同版本的 exe 对撞，只有发版时才凑得齐，
+  现在由 `a_replacement_leaves_this_instance_owning_the_channel` 用真 named pipe 钉住
+
+### 侧边栏开合补上缓动；默认部署改成 dev 档案（ADR-0166）
+
+- **「卡」不是掉帧。** 临时探针在 release 构建 + 真库上量到动画全程 `p50 16.5 ms / p90 16.8 ms /
+  p99 17.5 ms`（60fps 满帧，唯一的 984 ms 是启动后第一拍）。掉帧这条线排除掉了
+- **补间是直的**：Slint 的 `animate` 不写 `easing:` 默认就是线性。`animate width` 逐帧读边沿位置是
+  恒定 −12 px/20ms，补 `easing: ease-in-out` 之后是 −2,−7,−11,−16,−19,−20,−19,−16,−11,−8 的钟形。
+  时长 220 ms 不动（那是 `duration-normal` 那一档）
+- 新增 `benchmarks/scripts/motion_edges.ps1`：把一次动效采样的速度曲线打印成逐帧 delta。
+  `clips.ps1` 的 distinct 帧数只回答「动没动」，直边照样过门，所以门是地板不是形状
+- **`just deploy-workshop` 现在是 dev 档案那条**（几秒到几十秒），原来那条 `--release` 改名
+  `just deploy-workshop-release`（审过体积的那份 exe 才走它）。脚本文件同步对调：
+  `install/deploy-workshop.ps1` = dev，`install/deploy-workshop-release.ps1` = release。
+  仪式、bump、推送、落点全部不变，只有构建档案变
+
 ### 同步轮次不再给自己续命（ADR-0165）
 
 - **一次失败的同步轮次不是一次目击。** `last_seen` 回答的是「这台设备最近广播过吗」，只有 UDP 广播能

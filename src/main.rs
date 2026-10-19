@@ -463,6 +463,12 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
     // its clean-exit record instead of being killed — which is the property that
     // lets a deploy overwrite a running install without the exe being locked.
     //
+    // A launch that *is* the session takes the channel over as part of this call,
+    // so the name always answers for whichever instance has a window. That is not
+    // a detail: an instance that arrived by replacing an older one used to skip
+    // owning it, and the next launch then heard nothing, called itself the one
+    // session and drew a second window beside the first.
+    //
     // `on_quit` answers `false` while this process has no event loop yet: the
     // claim is made before the window exists, so a peer that asked to be replaced
     // in that window is told honestly that nothing accepted, rather than this
@@ -503,10 +509,20 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
             // because this is the one launch that ends in a dialog.
             let (title, body) = match verdict {
                 quire::platform::quit::SecondLaunch::Primary => return,
-                quire::platform::quit::SecondLaunch::AlreadyRunning { version } => (
-                    "Quire 已在运行",
-                    format!("Quire {version} 已经在运行，本次启动已退出。\n\n可在任务栏托盘图标上右键选择「显示主界面」。如果本次是打开 Markdown 文件启动，文件没有转交给现有窗口；请先退出 Quire，再重新打开该文件。"),
-                ),
+                quire::platform::quit::SecondLaunch::AlreadyRunning { version } => {
+                    // `unknown` is this build's own word for a peer it could not
+                    // read a version from — a reason for the log, not a thing to
+                    // put in a sentence shown to a user.
+                    let running = if version == "unknown" {
+                        "另一个 Quire".to_string()
+                    } else {
+                        format!("Quire {version}")
+                    };
+                    (
+                        "Quire 已在运行",
+                        format!("{running} 已经在运行，本次启动已退出。\n\n可在任务栏托盘图标上右键选择「显示主界面」。如果本次是打开 Markdown 文件启动，文件没有转交给现有窗口；请先退出 Quire，再重新打开该文件。"),
+                    )
+                }
                 quire::platform::quit::SecondLaunch::RunningIsNewer { version } => (
                     "已有更新版本在运行",
                     format!(
@@ -515,24 +531,38 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                 ),
                 quire::platform::quit::SecondLaunch::Replacing {
                     quit_accepted,
+                    session_ended,
                     replaced,
                 } => {
-                    if *quit_accepted {
-                        // The old session is on its way out and this one takes its
-                        // place — a window that vanishes and another that appears,
-                        // with no dialog in between. Naming the version that left
-                        // is what makes the swap legible instead of looking like
-                        // the app restarted itself behind the user's back.
+                    if *quit_accepted && *session_ended {
+                        // The old session is gone and this one takes its place —
+                        // a window that vanishes and another that appears, with no
+                        // dialog in between. Naming the version that left is what
+                        // makes the swap legible instead of looking like the app
+                        // restarted itself behind the user's back.
                         (
                             "已更新到新版本",
                             format!(
                                 "Quire {replaced} 已在运行，本次启动已让旧版本退出并由新版本接替。"
                             ),
                         )
+                    } else if *quit_accepted {
+                        // It said yes and is still winding down: the final flush
+                        // holds the library, so this launch waits rather than
+                        // becomes a second writer. Saying which half happened is
+                        // what makes a retry obvious instead of looking broken.
+                        (
+                            "旧版本还没退出完",
+                            format!(
+                                "已请求正在运行的 Quire {replaced} 退出，它接受了，但还没退出完。\n\n本次启动已退出，没有另开一个会话。等旧窗口关闭后再启动一次即可。"
+                            ),
+                        )
                     } else {
                         (
                             "旧版本未能退出",
-                            "已请求正在运行的旧版本退出，但它没有响应。\n\n请从托盘图标右键菜单选择「退出」后重试。".to_string(),
+                            format!(
+                                "已请求正在运行的 Quire {replaced} 退出，但它没有响应。\n\n本次启动已退出，没有另开一个会话。请从托盘图标右键菜单选择「退出」后重试。"
+                            ),
                         )
                     }
                 }
@@ -541,13 +571,13 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
         },
     )
     };
-    if let Some(verdict) = second {
-        // Every non-Primary verdict is a launch that does not become a session:
-        // it never opens the database and never draws a window, so there is
-        // nothing below to run.
-        if !matches!(verdict, quire::platform::quit::SecondLaunch::Replacing { .. }) {
-            return Ok(());
-        }
+    if second.is_some() {
+        // `claim` hands back a verdict only for a launch that is not the session
+        // — including a replacement whose handover did not finish, which used to
+        // be the one branch that started a window beside a live instance. It
+        // never opens the database and never draws a window, so there is nothing
+        // below to run. No verdict means the channel now answers for this process.
+        return Ok(());
     }
     // The argument parser reads only strings — no I/O to fail — so running it
     // before logging costs no coverage: `logging::init` installs the panic
