@@ -815,7 +815,10 @@ answers `version` with its own build, then that a third launch of that same buil
 is refused. Its positive control is the older instance's answer, read before the
 handover; with the `serve_named` call removed from the replacing arm the test fails
 with `no instance answered … (os error 2)` — the live symptom, the channel gone
-silent while an instance holds a window.
+silent while an instance holds a window. Landed as 0.1.42 and run on the machine it
+came from: the takeover logged `session ended` → `session started (pid 98804)` with no
+aborted-session warning, left exactly one instance, and the channel answered
+`version 0.1.42` — which is the sentence that was missing before.
 
 **It reuses ADR-0105's channel rather than adding a second mechanism.** That pipe
 was built so a deploy could end a running session through the app's own exit

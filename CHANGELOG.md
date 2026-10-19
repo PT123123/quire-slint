@@ -28,14 +28,19 @@
 - 测试用的 `serve_named_leaving`（`#[cfg(test)]`）只让测试能扮演一个「答应退出就真的撒手」的
   旧实例。真实会话永远不举那面旗：它要一路应答到自己进程消失为止，否则
   `wait_for_session_end` 等到的沉默就不等于「库句柄已关」
-- **本机现在这两个实例还在**：修复要下一次构建装机才生效；先手动把托盘里多出来的那个退出
-- **真跑了一腿（另一腿要等发版）**：刚构建的 debug exe 作为第三个进程去撞那条活着的
-  `\\.\pipe\quire-desktop-quit`，带 `--db <一次性库> --auto-exit 12` 做保险。实测
-  8.54 s 后 exit 0（8 秒正好是那条 MessageBox 的自动关窗时间）、`--db` 指向的目录**没有**
-  产生任何库文件（被拒的启动从不打开资料库）、`quire.log` 尾部没有它的任何一行（判定早于
-  日志初始化）、pipe 仍答 `version 0.1.41`、115780 / 115392 两个 pid 原封不动。
-  「新版本挤掉旧版本后由新进程占有通道」这一腿要两个不同版本的 exe 对撞，只有发版时才凑得齐，
-  现在由 `a_replacement_leaves_this_instance_owning_the_channel` 用真 named pipe 钉住
+- 装机**之前**先用刚构建的 debug exe 撞了一次活着的那条 `\\.\pipe\quire-desktop-quit`，带
+  `--db <一次性库> --auto-exit 12` 做保险：8.54 s 后 exit 0（8 秒正好是那条 MessageBox 的自动关窗
+  时间）、`--db` 指向的目录**没有**产生任何库文件（被拒的启动从不打开资料库）、`quire.log` 尾部
+  没有它的任何一行（判定早于日志初始化）、pipe 仍答 `version 0.1.41`、115780 / 115392 原封不动
+- **0.1.42 装机，接管那一条腿也在真机上跑了**：`just deploy-workshop`（dev 档案）把 bump 打成
+  f097e2b 推上 master（`git ls-remote` 从服务端读回同一个 SHA），产物归档到
+  `C:\workshop\quire-slint-0.1.42\quire-slint-0.1.42.exe`。直接启动新版就是接管：日志上是
+  `19:44:14Z session ended` → `19:44:19Z session started (pid 98804)`，没有 `previous session
+  aborted`（走的那个写下了自己的 clean-exit 记录），接管后进程表里只剩一个实例，而**那条通道报的
+  是 `version 0.1.42`** —— 这一句就是原来漏掉的半边。再启动同一个构建一次：8.32 s、exit 0、进程表
+  里仍然只有 98804、通道仍答 0.1.42、日志没有多出任何一行会话
+- 「新版本挤掉旧版本后由新进程占有通道」这一条在单测里叫
+  `a_replacement_leaves_this_instance_owning_the_channel`，在真机上叫上面那两行日志
 
 ### 侧边栏开合补上缓动；默认部署改成 dev 档案（ADR-0166）
 
