@@ -6,6 +6,10 @@
 # build here — ADR-0134's reason for the extra directories). `just clean` removes
 # it; 16 GB of it was sitting untracked and one `git add -A` away from a commit.
 /target-shot
+# Same hazard, and it keeps coming back: one experiment, one cargo tree
+# (`target-ui-refresh` for the notes sweep, `target-benchmark-*` for a perf arm).
+# Two of them were 15 GB of untracked build output today.
+/target-*
 /.scratch
 /.build
 /appdata

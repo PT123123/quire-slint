@@ -247,6 +247,14 @@ const ROUND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 /// whose server has stopped too, which is the round that would only time out.
 const RECENT_ENOUGH_SECS: u64 = 60;
 
+/// How often the pump tends the peers table on its own — no beat, no button
+/// press. It matches [`RECENT_ENOUGH_SECS`] on purpose: the gate that decides a
+/// row is this machine's own history is "sixty seconds since it was last heard",
+/// so a pass more often than that could only ever re-decide the same rows, and
+/// one much less often leaves a fat table being parsed by every round in the
+/// meantime.
+const PEER_PRUNE_SECS: u64 = 60;
+
 /// A row draws its dot filled while its announcement is this recent — the same
 /// window the auto-cycle's target rule spells as "a missed beat or two", and the
 /// window 「淘汰离线设备」 sweeps by. One number for both, so the button and the
@@ -471,6 +479,7 @@ fn start_sync(ui: &AppWindow, state: &Rc<AppState>, awaited: Awaited) {
     let cmd = cmd_tx.clone();
     let last_auto = std::cell::Cell::new(std::time::Instant::now());
     let last_refresh = std::cell::Cell::new(std::time::Instant::now());
+    let last_prune = std::cell::Cell::new(std::time::Instant::now());
     let was_open = std::cell::Cell::new(false);
     let t: &'static slint::Timer = Box::leak(Box::new(slint::Timer::default()));
     t.start(
@@ -531,6 +540,17 @@ fn start_sync(ui: &AppWindow, state: &Rc<AppState>, awaited: Awaited) {
                 crate::app::mcp_tools::publish_log(&g, &s);
             }
             let (auto, interval) = s.sync_config();
+            // The table tends itself on a clock, not only when something arrives.
+            // The other two doors for this are a discovery beat and the 同步
+            // page's ⟳, and a machine that sits alone on its network has neither:
+            // the rows it accumulated under retired device ids (ADR-0165) would
+            // then sit there being re-parsed by every round forever. One pass a
+            // minute costs two parses of the peers blob and writes only when it
+            // actually drops something, so a clean table is not made to do work.
+            if last_prune.get().elapsed().as_secs() >= PEER_PRUNE_SECS {
+                last_prune.set(std::time::Instant::now());
+                sync_prune_stale(&s);
+            }
             if auto && last_auto.get().elapsed().as_secs() >= interval {
                 last_auto.set(std::time::Instant::now());
                 // the same target list the 刷新 button dials, so a hand-started
@@ -554,14 +574,28 @@ fn sync_peer_display_name(peer: &crate::services::sync::engine::PeerRecord) -> &
 }
 
 /// The automatic half of 淘汰: a peer thirty days silent has its row given up,
-/// and the log says who left. Called where the table is already being tended —
-/// the page opening, a discovery beat landing — so a dead row never outlives the
-/// second look at the page it sits on. Nothing goes in the status line on
-/// purpose: the user did not press anything, and a sentence that arrives
-/// unbidden is how a background feature becomes the thing the user is trying to
-/// get rid of (the same rule that keeps an automatic round's failure off the
-/// notice bar).
+/// and this device's own retired ids are cleared beside it. Called where the
+/// table is already being tended — the page opening, a discovery beat landing —
+/// and on the pump's own minute, because a machine with no neighbour on the
+/// network has no beat to wait for and would otherwise carry the pile forever.
+/// Nothing goes in the status line on purpose: the user did not press anything,
+/// and a sentence that arrives unbidden is how a background feature becomes the
+/// thing the user is trying to get rid of (the same rule that keeps an automatic
+/// round's failure off the notice bar).
 fn sync_prune_stale(state: &Rc<AppState>) {
+    // This device's own retired ids go first, and they are not counted as a
+    // device leaving: they never were another device. The line says how many
+    // rows of the table were this machine's own history, because the 同步 page
+    // is about to lose a thousand rows and a reader who saw them yesterday
+    // deserves to know why they went.
+    let own = state.sync_prune_own_old_ids();
+    if !own.is_empty() {
+        state.sync_log_push(
+            "本机",
+            true,
+            &format!("已清除本机自己 {} 个旧设备号留下的同步记录。", own.len()),
+        );
+    }
     let retired = state.sync_prune_stale_peers();
     if retired.is_empty() {
         return;
@@ -1850,14 +1884,12 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
         let gw = gw.clone();
         let s = state.clone();
         ui.global::<UIState>().on_toggle_theme(move || {
-            // Ctrl+Shift+L still means "the other mode", not "the next catalog
-            // entry": the twelve themes are picked in Settings, and a keystroke
-            // that walked the list would be a slot machine. From any light
-            // palette to midnight, from any dark one (or 跟随系统) to light.
-            let next = if gw.upgrade().unwrap().get_theme() == "light" {
-                "midnight"
+            // With the light palette removed, the shortcut alternates the two
+            // neutral dark palettes; settings remains the place to pick others.
+            let next = if gw.upgrade().unwrap().get_theme() == "midnight" {
+                "graphite"
             } else {
-                "light"
+                "midnight"
             };
             gw.upgrade().unwrap().set_theme(next.into());
             s.set_theme(next);
@@ -2914,7 +2946,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
                     // The keystroke's twin (same rule as `on_toggle_theme`) —
                     // and it persists, which the old global-only assignment
                     // here did not: a palette toggle was lost on quit.
-                    let next = if g.get_theme() == "light" { "midnight" } else { "light" };
+                    let next = if g.get_theme() == "midnight" { "graphite" } else { "midnight" };
                     g.set_theme(next.into());
                     s.set_theme(next);
                 }

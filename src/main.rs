@@ -3,7 +3,10 @@
 // All logic lives in the library crate (src/lib.rs); this binary only
 // parses launch args, wires the window, and runs the event loop.
 
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// The app is a GUI in debug and release builds alike. Keeping the debug
+// subsystem as `console` made an MCP stdio child (`quire-slint.exe mcp`) open
+// a terminal window every time an MCP host started the bridge.
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use quire::app::controller;
 use quire::app::state::{AppState, HandleArgs};

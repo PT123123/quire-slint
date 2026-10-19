@@ -468,7 +468,6 @@ const THEME_IDS: &[&str] = &[
     "amber",
     "ocean",
     "rose",
-    "light",
     "jade",
     "deepblue",
     "twilight",
@@ -2160,7 +2159,7 @@ impl AppState {
         match self.settings.borrow().get("theme").map(String::as_str) {
             // legacy spellings: "dark" was the midnight-shaped theme this shell
             // shipped before the catalog existed
-            Some("dark") => "midnight".into(),
+            Some("dark" | "light") => "midnight".into(),
             Some(v) if THEME_IDS.contains(&v) => v.into(),
             _ => "midnight".into(),
         }
@@ -7669,6 +7668,13 @@ impl AppState {
         for row in tasks.iter_mut() {
             row.picked = picking && self.org_picked(row.id as i64, true);
         }
+        // The stream is filed by day-section — 今天, then 昨天, then 更早, each with
+        // one header. The partition happens here rather than in the delegate
+        // because a header belongs to a *section*, not to a run: sorted by 按内容,
+        // two days interleave, and a run-per-header would print 今天 three times
+        // down one list. `sort_by` is stable, so the order the sort and 置顶 just
+        // produced is kept inside each day and never fought with it.
+        org_day_runs(&mut notes);
         self.note_rows.set_vec(notes);
         self.task_rows.set_vec(tasks);
         self.task_list_rows.set_vec(self.org_lists(view, list as i64));
@@ -7706,6 +7712,7 @@ impl AppState {
             // `note-rows.length`: while the bin is open that model holds the *bin's*
             // rows, and a nav row reading them would say the list is empty.
             g.set_org_note_count(self.organizer.borrow().live_notes().count() as i32);
+            g.set_org_note_week_count(self.org_note_week_count());
             g.set_org_view_title(view_title.into());
             g.set_org_view_count_label(view_count_label.into());
             g.set_org_done_count(done);
@@ -7717,6 +7724,23 @@ impl AppState {
             g.set_org_note_details(self.org_note_details(open_note_id as i64));
             g.set_org_task_detail(self.org_task_detail(task_id as i64, &dates));
         }
+    }
+
+    /// The rail's 近 7 天 number: the notes written in the last seven days.
+    ///
+    /// Counted on the same UTC day boundary as `org_group`, and over the same
+    /// rows the list draws (a reply belongs to the note it answers, and a
+    /// delete that is still waiting behind the 撤销 bar is not on any list), so
+    /// the stat card can never disagree with the sections above it.
+    fn org_note_week_count(&self) -> i32 {
+        let days = now_secs().div_euclid(86_400);
+        let hidden = self.org_pending_ids(false);
+        let catalog = self.organizer.borrow();
+        catalog
+            .live_notes()
+            .filter(|n| n.ref_note.is_none() && !hidden.contains(&(n.id.0 as i64)))
+            .filter(|n| days - n.created.div_euclid(86_400) < 7)
+            .count() as i32
     }
 
     /// The five numbers the nav column paints, in the smart views' own slot order
@@ -7907,6 +7931,7 @@ impl AppState {
                 name: tag_segments(&full).last().copied().unwrap_or_default().into(),
                 count,
                 excluded: excluded.contains(&full),
+                color: tag_color_slot(&full),
                 path: full.into(),
             })
             .collect();
@@ -7936,6 +7961,10 @@ impl AppState {
     ///
     /// Both halves' tags are in the pool — a `#token` typed into this layer is a
     /// tag on a *note*, and the 任务 half's tags are just tags the user has used.
+    ///
+    /// The pool is folded into a per-tag **usage** (how many live rows carry it,
+    /// and the newest row that used it) because that, not spelling, is what makes
+    /// a suggestion worth tapping — see the sort below.
     pub fn org_tag_suggestions(&self, draft: &str) -> Vec<String> {
         let Some(hash) = draft.rfind('#') else {
             return Vec::new();
@@ -7945,22 +7974,27 @@ impl AppState {
             return Vec::new();
         }
         let prefix = typed.to_lowercase();
-        let mut pool: BTreeSet<String> = BTreeSet::new();
+        let mut usage: BTreeMap<String, TagUsage> = BTreeMap::new();
         {
             let catalog = self.organizer.borrow();
-            for tags in catalog
+            // A row is the tag being *used* once, at the moment it was written;
+            // a binned row does not use its tags any more, which is why these are
+            // the live halves — the same two lists the tag column folds.
+            for (tags, created) in catalog
                 .live_notes()
-                .map(|n| &n.tags)
-                .chain(catalog.live_tasks().map(|t| &t.tags))
+                .map(|n| (&n.tags, n.created))
+                .chain(catalog.live_tasks().map(|t| (&t.tags, t.created)))
             {
                 for tag in tags {
-                    pool.insert(tag.clone());
+                    let row = usage.entry(tag.clone()).or_default();
+                    row.uses += 1;
+                    row.last_used = row.last_used.max(created);
                 }
             }
         }
-        let mut out: Vec<String> = pool
+        let mut out: Vec<(String, TagUsage)> = usage
             .into_iter()
-            .filter(|tag| {
+            .filter(|(tag, _)| {
                 if prefix.is_empty() {
                     return true;
                 }
@@ -7968,12 +8002,20 @@ impl AppState {
                 tag.to_lowercase().starts_with(&prefix) || last.to_lowercase().starts_with(&prefix)
             })
             .collect();
-        // shortest first, then by name: the tag the user is reaching for is the
-        // one they wrote a word for, not the deepest path that happens to start
-        // the same way
-        out.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(b)));
+        // most-used first, then most-recently-used: the tag the user is reaching
+        // for is the one they keep writing, and among tags used the same number of
+        // times the one they wrote last is the one still on their mind. Shortest
+        // and then name only break the remaining ties, so `#工` still prefers the
+        // flat `工作` over a deeper path when both are equally worn in.
+        out.sort_by(|a, b| {
+            b.1.uses
+                .cmp(&a.1.uses)
+                .then(b.1.last_used.cmp(&a.1.last_used))
+                .then(a.0.len().cmp(&b.0.len()))
+                .then(a.0.cmp(&b.0))
+        });
         out.truncate(5);
-        out
+        out.into_iter().map(|(tag, _)| tag).collect()
     }
 
     /// One note as its row. `excerpt` is the body's first non-empty line, which
@@ -7996,10 +8038,18 @@ impl AppState {
             // The raw paths, one per pill: the card shows `#项目/工作` and the
             // pill's click filters by the same string — see `NoteRow.tag-list`.
             tag_list: note_tag_model(&note.tags),
+            // One colour slot per pill, in the paths' own order: the note's
+            // `#读书` and the rail's 读书 row have to be the same colour, and a
+            // hash run in the delegate would be a second definition of the tag.
+            tag_slots: note_tag_slots(&note.tags),
             when: org_when(note.edited).into(),
+            group: org_group(note.edited).into(),
             selected,
             // `rebuild_organizer` lights the picks after the rows exist
             picked: false,
+            // Likewise the section flag: only the ordered list knows a run.
+            first: false,
+            group_count: 0,
         }
     }
 
@@ -15190,6 +15240,12 @@ fn peer_carries_the_whole_library(kind: &str) -> bool {
 /// 「淘汰离线设备」 is how those leave.
 const PEER_STALE_SECS: u64 = 30 * 86_400;
 
+/// How long a row has to be silent before this device treats it as its own
+/// retired id rather than a live neighbour. It is the round gate's window
+/// (`RECENT_ENOUGH_SECS` in the controller) restated here: inside it, a row is
+/// announcing, and a row that is announcing is not this machine's history.
+const OWN_OLD_ID_GRACE_SECS: u64 = 60;
+
 /// Store an attachment whose bytes arrived but that [`AttachmentStore::import_bytes`]
 /// could not take (a non-image, or a picture that will not decode): the file
 /// under a name *this device* owns, and the row that points at it.
@@ -15423,14 +15479,23 @@ impl AppState {
     /// The last word on one sync attempt: the peers table's `last_sync` moves
     /// only on success.
     pub fn sync_note_synced(&self, peer_id: &str, ok: bool) {
-        let mut peers = self.sync_peers();
-        let now = crate::services::sync::engine::now_unix();
-        if let Some(p) = peers.iter_mut().find(|p| p.id == peer_id) {
-            p.last_seen = now;
-            if ok {
-                p.last_sync = crate::services::sync::engine::now_rfc3339();
-            }
+        // **A round is not a sighting.** `last_seen` belongs to the announcer: the
+        // beat is what says a device is on the network, and it speaks every four
+        // seconds, so a live peer never needs help staying recent. Stamping it
+        // here made every round — including every failed one — a fresh reason to
+        // run another round against the same row, and the sixty-second gate could
+        // then never expire. With a table of a thousand rows (this device's own
+        // retired ids) that is a permanent loop: 1073 dials every ten seconds,
+        // each one re-writing the whole peers blob and re-building the whole
+        // device list, which is what pinned a core and climbed to gigabytes.
+        if !ok {
+            return;
         }
+        let mut peers = self.sync_peers();
+        let Some(p) = peers.iter_mut().find(|p| p.id == peer_id) else {
+            return;
+        };
+        p.last_sync = crate::services::sync::engine::now_rfc3339();
         self.sync_set_peers(&peers);
     }
 
@@ -15496,6 +15561,40 @@ impl AppState {
             .map(|p| p.id.clone())
             .collect();
         self.sync_drop_peer_rows(&stale)
+    }
+
+    /// Drop the rows that name **this** device under a device id this session does
+    /// not hold.
+    ///
+    /// Before ADR-0142 the id was re-minted on every launch — so every launch added
+    /// a row saying "there is another Windows machine here, also called
+    /// `DESKTOP-HCPV6H6`", and this machine's own table grew by one phantom per
+    /// start (1073 of them by the 19th, 171 KB of JSON). Those rows are not another
+    /// device: the announcement that would keep one alive can only come from the
+    /// running instance, which answers under the current id. A beat from a real
+    /// second machine with the same name re-adds its row within four seconds, so
+    /// this is a cleanup that heals rather than a filter that can lock someone out.
+    pub fn sync_prune_own_old_ids(&self) -> Vec<crate::services::sync::engine::PeerRecord> {
+        let me = self.sync_self_info();
+        let now = crate::services::sync::engine::now_unix();
+        let own: Vec<String> = self
+            .sync_peers()
+            .iter()
+            .filter(|p| {
+                p.id != me.id
+                    && p.kind == me.kind
+                    && p.name == me.name
+                    // The grace is what keeps this prune from fighting the
+                    // announcer: a machine that really does share this computer
+                    // name (a cloned VM, two laptops imaged the same way) beats
+                    // every four seconds, and dropping its row on each beat would
+                    // re-add it on the next — the same rewrite-and-redial loop
+                    // this function exists to end.
+                    && now.saturating_sub(p.last_seen) >= OWN_OLD_ID_GRACE_SECS
+            })
+            .map(|p| p.id.clone())
+            .collect();
+        self.sync_drop_peer_rows(&own)
     }
 
     /// The 淘汰离线设备 button: every peer whose announcement is older than the
@@ -16849,6 +16948,36 @@ fn note_tag_model(tags: &[String]) -> ModelRc<slint::SharedString> {
     )))
 }
 
+/// The tag's own colour, as a `Colors.block-text` slot in 2..=8.
+///
+/// A slot rather than a colour because the palette is the theme's business:
+/// `block-text` is the one place the app's nine content swatches live, and a tag
+/// is content. Slot 1 (gray) is left out — a gray tag reads as a tag with
+/// nothing said about it — and so is 9 (red), which every other surface in this
+/// area already spends on 逾期 and 危险.
+///
+/// FNV-1a over the path's bytes, because `DefaultHasher` is seeded per process
+/// and a tag whose colour changed between runs would be a tag the reader has to
+/// re-learn. The whole path is hashed, not the last segment: `项目/工作` and
+/// `团队/工作` are different tags and may colour differently, while the same path
+/// always lands on the same swatch in every surface that paints it.
+fn tag_color_slot(path: &str) -> i32 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in path.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (hash % 7) as i32 + 2
+}
+
+/// One colour slot per tag, in `note_tag_model`'s own order, so a delegate can
+/// index the two side by side and never has to pair them up itself.
+fn note_tag_slots(tags: &[String]) -> ModelRc<i32> {
+    ModelRc::from(Rc::new(VecModel::from(
+        tags.iter().map(|t| tag_color_slot(t)).collect::<Vec<_>>(),
+    )))
+}
+
 /// The smart views' own names, in their slot order. Rust paints the header and
 /// `OrganizerArea.slint` paints the nav, and both have to say 收集箱 about slot 0.
 const SMART_NAMES: [&str; 5] = ["收集箱", "今天", "最近 7 天", "全部", "已完成"];
@@ -16912,7 +17041,13 @@ fn org_task_row(
     }
 }
 
+/// Does this note answer the needle in the list's search box.
+///
+/// A leading `#` is dropped: every tag chip on a row spells itself with one, and
+/// the empty state tells the reader to search by tag name, so a query that arrives
+/// as `#读书` has to find the note tagged 读书. The stored path carries no sigil.
 fn org_note_matches(note: &Note, needle: &str) -> bool {
+    let needle = needle.strip_prefix('#').unwrap_or(needle);
     needle.is_empty()
         || note.title.to_lowercase().contains(needle)
         || note.body.to_lowercase().contains(needle)
@@ -16972,6 +17107,64 @@ fn org_when(secs: i64) -> String {
         format!("{} 天前", age / 86_400)
     } else {
         crate::core::date::to_iso(secs.div_euclid(86_400))
+    }
+}
+
+/// Which day a note's row is filed under in the list's stream: 今天 / 昨天 / 更早.
+///
+/// A separate string rather than something the delegate reads off `org_when`,
+/// because the two answers different questions and are not derivable from one
+/// another: a note written 25 小时前 says 「1 天前」 by age and lands under 昨天 by
+/// day, and a note written at 23:50 the night before is 6 小时前 *and* 昨天. Only
+/// one of those is a clock, and the day boundary is the one that needs the store's
+/// own epoch — which is UTC, for the reason `org_when` gives: nothing here keeps a
+/// zone, so a row's bucket is the UTC day it was written in.
+///
+/// A future stamp (a peer's clock ahead of this one) reads 今天 rather than
+/// producing a 「明天」 section the stream has no place for.
+fn org_group(secs: i64) -> &'static str {
+    let days = now_secs().div_euclid(86_400) - secs.div_euclid(86_400);
+    if days <= 0 {
+        "今天"
+    } else if days == 1 {
+        "昨天"
+    } else {
+        "更早"
+    }
+}
+
+/// The order the stream files its sections in: 今天, then 昨天, then 更早. A rank
+/// and not a string compare, because by code point 更早 sorts before 今天 and the
+/// section a reader came for is the one they wrote today.
+fn org_group_rank(group: &str) -> u8 {
+    match group {
+        "今天" => 0,
+        "昨天" => 1,
+        _ => 2,
+    }
+}
+
+/// File the rows under their day and mark each section's first row.
+///
+/// `sort_by` is stable, so the order the list's own sort and 置顶 produced is kept
+/// *inside* each day rather than fought with. The run marking happens here and not
+/// in the delegate because a header belongs to a section, not to a run: sorted by
+/// 按内容, two days interleave, and a delegate reading only its own row would
+/// either print 今天 three times down one list or miss the count beside it.
+fn org_day_runs(notes: &mut [NoteRow]) {
+    notes.sort_by(|a, b| org_group_rank(&a.group).cmp(&org_group_rank(&b.group)));
+    let mut start = 0usize;
+    while start < notes.len() {
+        let group = notes[start].group.clone();
+        let mut end = start + 1;
+        while end < notes.len() && notes[end].group == group {
+            end += 1;
+        }
+        for (offset, row) in notes[start..end].iter_mut().enumerate() {
+            row.first = offset == 0;
+            row.group_count = if offset == 0 { (end - start) as i32 } else { 0 };
+        }
+        start = end;
     }
 }
 
@@ -17067,6 +17260,16 @@ fn tags_text(tags: &[String]) -> String {
 // projection that shows or filters one has to agree on what its segments are. The
 // Compose shell keeps the same rules in `OrgModel`.
 
+/// How much a tag has been used, as the 标签建议 tray reads it: the number of live
+/// rows carrying it, and the newest of those rows. Both come from the catalog at
+/// the moment the tray is asked, so a tag earns its place by being written, not by
+/// being spelled short.
+#[derive(Default, Clone, Copy)]
+struct TagUsage {
+    uses: i32,
+    last_used: i64,
+}
+
 /// A tag as its segments: `项目/工作` → [项目, 工作]. Empty segments are dropped.
 fn tag_segments(tag: &str) -> Vec<&str> {
     tag.split('/').map(str::trim).filter(|s| !s.is_empty()).collect()
@@ -17106,18 +17309,20 @@ fn tag_excluded(tags: &[String], excluded: &BTreeSet<String>) -> bool {
         .any(|path| tags.iter().any(|tag| tag_matches(tag, path)))
 }
 
-/// The hidden set as the column's own line — `排除 ⊘#项目 ⊘#项目/工作` — or "" when
-/// nothing is hidden. The reference's spelling, kept because the two shells' text
-/// should be the same text.
+/// The hidden set as the column's own line — `排除 #项目、#项目/工作` — or "" when
+/// nothing is hidden. The `⊘` the reference puts before each path is left out on
+/// purpose: that glyph is not in this app's font chain, so as `Text` it is a hole
+/// that only pushes the names apart. The exclude control at a tag row's right edge
+/// draws the same idea out of two `Rectangle`s, which is why that one shows.
 fn org_excluded_label(excluded: &BTreeSet<String>) -> String {
     if excluded.is_empty() {
         return String::new();
     }
     let marked: Vec<String> = excluded
         .iter()
-        .map(|path| format!("⊘#{}", tag_breadcrumb(path)))
+        .map(|path| format!("#{}", tag_breadcrumb(path)))
         .collect();
-    format!("排除 {}", marked.join(" "))
+    format!("排除 {}", marked.join("、"))
 }
 /// A row's 唯一 ID as the clipboard and the detail rows spell it: the stored
 /// uuid, or `local:<id>` for a row an older peer sent without one (core ADR-0002).
@@ -17255,7 +17460,7 @@ fn org_strip_lead(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        mock_commands, palette_action, start_stop, FindHits, Lang, NavHistory, NavStop,
+        mock_commands, palette_action, start_stop, FindHits, Lang, NavHistory, NavStop, NoteRow,
         CMD_NAV_BACK, CMD_NAV_FORWARD, CMD_OPEN_HTML, CMD_PAGE_BASE, HEADER_FAVORITES_ID,
         NAV_MAX, PaletteAction,
     };
@@ -23269,7 +23474,8 @@ mod tests {
                 .is_empty(),
             "…and landed on the row that synced"
         );
-        // …and a round that did not: `last_seen` moves, `last_sync` does not.
+        // …and a round that did not: neither `last_seen` nor `last_sync` moves, so
+        // there is nothing for the file to keep (see `a_failed_round_does_not_make_a_peer_fresh_again`).
         s.sync_note_synced("dev-b", false);
         assert_eq!(pending(), 0, "a failed round says nothing the file needs to keep");
     }
@@ -23388,6 +23594,125 @@ mod tests {
             s.sync_setting("sync.shadow.dev-new").as_deref(),
             Some(""),
             "忘记 drops the memory as well as the row"
+        );
+    }
+
+    /// **A round that failed is not a sighting.**
+    ///
+    /// `last_seen` answers one question — has this device announced lately — and
+    /// only an announcement can answer it. Stamping it at the end of a round made
+    /// every round, including the thousandth failure against an address that
+    /// belongs to somebody else now, a fresh reason to run another round inside
+    /// the sixty-second gate: the row could never expire, so the automatic cycle
+    /// dialled it again every ten seconds for the life of the process.
+    #[test]
+    fn a_failed_round_does_not_make_a_peer_fresh_again() {
+        use crate::services::sync::engine::now_unix;
+
+        let s = super::AppState::new(&plain_args(), None);
+        let now = now_unix();
+        let rows = vec![{
+            let mut p = peer("dev-ghost", "Ghost desk");
+            // Ten minutes of silence: out of the gate, and it has to stay there.
+            p.last_seen = now - 600;
+            p
+        }];
+        s.settings.borrow_mut().insert(
+            "sync.peers".into(),
+            serde_json::to_string(&rows).unwrap_or_default(),
+        );
+
+        s.sync_note_synced("dev-ghost", false);
+        assert_eq!(
+            s.sync_peers()[0].last_seen,
+            now - 600,
+            "a dial that got nowhere does not move the announcement stamp"
+        );
+        assert!(
+            s.sync_peers()[0].last_sync.is_empty(),
+            "…and a failure says nothing in 最近记录 either"
+        );
+
+        // The control on both halves: a beat *is* a sighting, and a round that
+        // worked is stamped — just not as an announcement.
+        s.sync_note_device("dev-ghost", "Ghost desk", "windows", "127.0.0.1", 0, Some(true));
+        assert!(
+            s.sync_peers()[0].last_seen > now - 600,
+            "the announcer still owns the field"
+        );
+        let seen = s.sync_peers()[0].last_seen;
+        s.sync_note_synced("dev-ghost", true);
+        assert!(!s.sync_peers()[0].last_sync.is_empty(), "a round that worked is stamped");
+        assert_eq!(
+            s.sync_peers()[0].last_seen, seen,
+            "…and a successful round does not claim an announcement either"
+        );
+    }
+
+    /// **The table stops holding this machine's own history.**
+    ///
+    /// Before ADR-0142 the device id was re-minted on every launch, so every
+    /// launch left a row behind saying "another Windows machine called
+    /// DESKTOP-HCPV6H6 is on this network". One thousand such rows is one
+    /// thousand dials a round, which is the loop this prune ends. The running
+    /// instance and every genuinely other device are untouched, and a real second
+    /// machine of this name gets its row back from its next beat.
+    #[test]
+    fn the_rows_that_are_this_device_under_an_old_id_are_dropped() {
+        use crate::services::sync::engine::now_unix;
+
+        let s = super::AppState::new(&plain_args(), None);
+        let me = s.sync_self_info();
+        let now = now_unix();
+        let rows = vec![
+            {
+                let mut p = peer(&me.id, &me.name);
+                p.kind = me.kind.clone();
+                p.last_seen = now;
+                p
+            },
+            // Same name, same platform, an id this session does not hold, and no
+            // beat behind it: this machine, before the restart.
+            {
+                let mut p = peer("windows-before-this-one", &me.name);
+                p.kind = me.kind.clone();
+                p.last_seen = now - 3_600;
+                p
+            },
+            // Same platform, a different machine — the control that this is not a
+            // "drop every windows row" rule.
+            peer("dev-other", "Other desk"),
+            // This name and platform, but announcing four seconds ago: a real
+            // neighbour that happens to share the computer name. The grace is what
+            // keeps the prune from dropping it on every beat.
+            {
+                let mut p = peer("dev-twin", &me.name);
+                p.kind = me.kind.clone();
+                p.last_seen = now - 4;
+                p
+            },
+        ];
+        s.settings.borrow_mut().insert(
+            "sync.peers".into(),
+            serde_json::to_string(&rows).unwrap_or_default(),
+        );
+
+        let gone = s.sync_prune_own_old_ids();
+        assert_eq!(
+            peer_ids(&gone),
+            ["windows-before-this-one"],
+            "only the silent row that names this device under an id we do not have"
+        );
+        assert_eq!(
+            peer_ids(&s.sync_peers()),
+            [me.id.as_str(), "dev-other", "dev-twin"],
+            "this session, another device, and a live neighbour of the same name all keep their rows"
+        );
+        // Idempotent: the pump calls this on every beat, and a clean table must
+        // rewrite nothing.
+        assert!(
+            s.sync_prune_own_old_ids().is_empty(),
+            "a second pass finds nothing and queues no write"
         );
     }
 
@@ -25254,6 +25579,90 @@ mod tests {
         );
     }
 
+    /// A `NoteRow` with nothing on it but an id and the day it was filed under —
+    /// the two fields `org_day_runs` reads and writes.
+    fn day_row(id: i32, group: &str) -> NoteRow {
+        NoteRow {
+            id,
+            group: group.into(),
+            ..Default::default()
+        }
+    }
+
+    /// The stream is filed by day, one header per section, and the header's own
+    /// count rides on the row that opens it. Both are Rust's because only the
+    /// ordered list knows where a section ends (`SPEC §四十一`).
+    #[test]
+    fn the_stream_files_its_rows_under_one_header_per_day() {
+        // The days arrive out of order on purpose: a list already filed by hand
+        // would prove nothing about the filing.
+        let mut rows = vec![
+            day_row(1, "更早"),
+            day_row(2, "今天"),
+            day_row(3, "昨天"),
+            day_row(4, "今天"),
+        ];
+        super::org_day_runs(&mut rows);
+        let ids: Vec<i32> = rows.iter().map(|r| r.id).collect();
+        assert_eq!(ids, [2, 4, 3, 1], "今天, then 昨天, then 更早");
+
+        let heads: Vec<(i32, i32)> = rows
+            .iter()
+            .filter(|r| r.first)
+            .map(|r| (r.id, r.group_count))
+            .collect();
+        assert_eq!(heads, [(2, 2), (3, 1), (1, 1)], "one header each, with its size");
+        assert_eq!(
+            rows[1].group_count, 0,
+            "only the row that opens a section carries the count"
+        );
+
+        // 按内容 interleaves two days, and the header still prints once per day
+        // rather than once per run.
+        let mut mixed = vec![day_row(5, "昨天"), day_row(6, "今天"), day_row(7, "昨天")];
+        super::org_day_runs(&mut mixed);
+        assert_eq!(mixed.iter().filter(|r| r.first).count(), 2);
+        assert_eq!(
+            mixed.iter().find(|r| r.first).map(|r| r.group_count),
+            Some(1),
+            "今天 has the one row, and says so"
+        );
+    }
+
+    /// The needle answers to the sigil the chips print, and the hidden set names
+    /// itself without a glyph this build's font chain does not carry.
+    #[test]
+    fn a_tag_query_finds_its_notes_and_the_hidden_set_names_itself() {
+        let (state, _repo) = org_session();
+        let a = state.org_create_note().unwrap();
+        state.org_note_tags(a, "读书".into());
+        let b = state.org_create_note().unwrap();
+        state.org_note_body(b, "《The Design of Everyday Things》".into());
+        let none = BTreeSet::new();
+
+        assert_eq!(state.org_notes("读书", "", &none, -1, 0).len(), 1);
+        assert_eq!(
+            state.org_notes("#读书", "", &none, -1, 0).len(),
+            1,
+            "a chip spells its tag with a #, so the needle may arrive that way"
+        );
+        assert_eq!(
+            state.org_notes("#", "", &none, -1, 0).len(),
+            2,
+            "a bare sigil filters nothing"
+        );
+
+        let hidden: BTreeSet<String> = ["读书".to_string(), "项目/工作".to_string()]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            super::org_excluded_label(&hidden),
+            "排除 #读书、#项目 / 工作",
+            "the line is words, not a ⊘ the font has no glyph for"
+        );
+        assert_eq!(super::org_excluded_label(&BTreeSet::new()), "");
+    }
+
     /// 指令 (SPEC §四十一): the operations of one batch see each other, the batch is
     /// **one** undo step, and an action the half cannot take is refused by name
     /// rather than silently skipped.
@@ -25560,7 +25969,9 @@ mod tests {
             state.org_tag_suggestions("记一下 #想法 再看 #工"),
             vec!["工作", "项目/工作"]
         );
-        // An empty prefix is the whole pool, capped at five, shortest first.
+        // An empty prefix is the whole pool, capped at five. Every tag here is used
+        // once and by rows written in the same instant, so the tie falls to the
+        // spelling and the short names come first.
         assert_eq!(
             state.org_tag_suggestions("#"),
             vec!["a1", "a2", "a3", "a4", "a5"]
@@ -25568,6 +25979,68 @@ mod tests {
         // A prefix that neither a whole tag nor a last segment starts with suggests
         // nothing — including the leaf of a path the user has not written before.
         assert!(state.org_tag_suggestions("#z").is_empty());
+    }
+
+    /// 标签建议 are ranked by **use**, not by spelling: a tag several rows carry
+    /// comes before a shorter one a single row carries, and among tags used the
+    /// same number of times the one written last wins.
+    #[test]
+    fn the_tag_tray_is_ordered_by_how_much_each_tag_has_been_used() {
+        use crate::core::organizer::{Note, NoteId};
+        use crate::core::Command;
+
+        let (state, _repo) = org_session();
+        let used = |state: &super::AppState, tags: &str, times: usize| {
+            for _ in 0..times {
+                let id = state.org_create_note().unwrap();
+                state.org_note_tags(id, tags.into());
+            }
+        };
+        used(&state, "项目/工作", 3);
+        used(&state, "工作", 1);
+        // Three rows carry the deeper path, one carries the flat name — and the
+        // flat name is no longer first for being two characters shorter.
+        assert_eq!(
+            state.org_tag_suggestions("#工"),
+            vec!["项目/工作", "工作"],
+            "the tag the user keeps writing is the one they are reaching for"
+        );
+        assert_eq!(
+            state.org_tag_suggestions("#"),
+            vec!["项目/工作", "工作"],
+            "with nothing typed, the worn-in tag still leads"
+        );
+
+        // Equal use: the newer row decides it, so the tag written *this* time beats
+        // one the user has not put on a row since the file began. Seeded straight
+        // through the command so their birthdays are the test's, not the clock's.
+        let (fresh, _repo) = org_session();
+        let seed = |tags: &[&str], created: i64| {
+            fresh
+                .exec_org(Command::CreateNote {
+                    note: Note {
+                        id: NoteId(fresh.organizer().notes.len() as u64 + 1),
+                        uuid: String::new(),
+                        title: String::new(),
+                        body: String::new(),
+                        pinned: false,
+                        tags: tags.iter().map(|t| (*t).to_string()).collect(),
+                        created,
+                        edited: created,
+                        ref_note: None,
+                        deleted_at: None,
+                        rev: String::new(),
+                    },
+                })
+                .expect("the note is written");
+        };
+        seed(&["去年"], 1_000);
+        seed(&["本周"], 2_000);
+        assert_eq!(
+            fresh.org_tag_suggestions("#"),
+            vec!["本周", "去年"],
+            "one use each: the row written later puts its tag first"
+        );
     }
 
     /// 筛选后的新行 (SPEC §四十一): a task made **under** a tag filter is born

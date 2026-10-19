@@ -89,6 +89,22 @@ dist:
 deploy-workshop:
     powershell -NoProfile -ExecutionPolicy Bypass -File install\deploy-workshop.ps1
 
+# the same deploy, built in the *dev* profile instead of `--release`.
+#
+# Identical ceremony to `deploy-workshop` — bump the patch, commit + push the bump,
+# archive to C:\workshop\quire-slint-<version>\ — and identical destination. Only the
+# build differs: `cargo build --bin quire-slint` (dev) instead of `--release`. The
+# release build's cost is `[profile.release]`'s `codegen-units = 1` + thin LTO, ~198s
+# of codegen on the single `quire` crate plus the link, a repeat deploy measured at
+# 9-11 minutes. Dev asks for the plain tree `just build` / `just run` already keep warm,
+# with no `--config` override (that hybrid is what `check`'s comment warns about: it
+# rebuilds all 325 dependency crates), so the bump only recompiles `quire` and an ~11s
+# link. Use this when the workshop only needs a current exe to run; use `deploy-workshop`
+# when the archived file is the audited-size release itself. The dev exe still carries
+# the bumped FileVersion — build.rs stamps it from CARGO_PKG_VERSION, profile-independent.
+deploy-workshop-fast:
+    powershell -NoProfile -ExecutionPolicy Bypass -File install\deploy-workshop-fast.ps1
+
 # publish a release: bump the patch, build the release exe, and attach two files
 # to a GitHub release — Quire-<version>-windows-x64-setup.exe (install\
 # build-installer.ps1's Inno Setup program, per-user and no elevation) and

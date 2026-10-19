@@ -519,7 +519,23 @@ export struct NoteRow {
     // reconstructs the other. (`tags` above stays the joined label for the
     // detail panel.)
     tag-list: [string],
+    // One `Colors.block-text` slot per entry of `tag-list`, in the same order: a
+    // tag's colour is chosen once by Rust (hashing a path is model work) so the
+    // pill on a note and the row in the rail are the same colour.
+    tag-slots: [int],
     when: string,         // relative age ("3 分钟前")
+    // Which day-section the row is filed under: 今天 / 昨天 / 更早. A word from
+    // Rust because a day needs a clock, and the section a row sits under has to
+    // be the same answer the rail's 近 7 天 card gives.
+    group: string,
+    // True on the row that *starts* its group, so the stream draws one 今天 /
+    // 昨天 / 更早 header over a run instead of one per card. Rust decides it
+    // because only the projection knows the final order — a delegate would have
+    // to read its neighbour, and a sort would move the headers with the rows.
+    first: bool,
+    // How many rows share this row's `group`, set only on the row that starts
+    // the section — the header prints it beside 今天, and no other row reads it.
+    group-count: int,
     selected: bool,
     // picked by 多选 — a second flag beside `selected` on purpose: one row can be
     // the one the detail pane is showing *and* a picked one, and the two states
@@ -561,6 +577,9 @@ export struct TagRow {
     name: string,
     count: int,
     path: string,
+    // The tag's colour as a `Colors.block-text` slot, hashed from the whole path
+    // in Rust so this row and the pill on a note agree about it.
+    color: int,
     // 反向筛选 (SPEC §四十一): this path is one the user has *hidden*, so the row
     // paints struck-through and its tap removes the exclusion. The badge is the
     // set, projected — a delegate never holds one.
@@ -1425,7 +1444,6 @@ export global UIState {
     in-out property <int> org-note-sort: 0;       // 0 最新创建, 1 最新更新, 2 按内容
     in-out property <bool> org-note-descending: false;
     in-out property <bool> org-task-descending: false;
-    in-out property <bool> org-note-search-open: false;
     // Whether the 笔记 toolbar's sort list is down. Session state like every
     // other "how the user is looking" fact here (ADR-0073) — and on `UIState`
     // rather than on the component because a headless scene has to be able to
@@ -1476,7 +1494,7 @@ export global UIState {
     in-out property <string> org-tag: "";
     in-out property <string> org-tag-label: "";
     in-out property <string> org-tag-parent: "";
-    // 反向筛选: the paths the user has hidden, as one line (`排除 ⊘#项目 ⊘#工作`).
+    // 反向筛选: the paths the user has hidden, as one line (`排除 #项目、#工作`).
     // Empty is "nothing hidden". The set itself lives in Rust — this is the
     // projection of it, the same way every other count on this screen is.
     in-out property <string> org-excluded-label: "";
@@ -1608,6 +1626,10 @@ export global UIState {
     // 全部笔记's own count, projected off the catalog: the list model holds the
     // *bin's* rows while the bin is open, so a nav row reading it would be wrong.
     in-out property <int> org-note-count: 0;
+    // The same half's 近 7 天 number, for the rail's stat card. A projection
+    // rather than something the card counts, because "the last seven days" needs
+    // the store's day boundary and the stream's 今天/昨天/更早 sections use it too.
+    in-out property <int> org-note-week-count: 0;
     callback org-bin-toggled();
     // 恢复 / 彻底删除 on a binned row. One pair for both halves: which kind the id
     // names is the tab's answer, exactly as the row's own verbs already are.

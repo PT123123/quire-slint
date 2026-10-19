@@ -455,7 +455,7 @@ export component SettingsDialog inherits Rectangle {
                 // ── 外观 ─────────────────────────────────────────────────
                 if (UIState.settings-filter == ""
                     ? UIState.settings-tab == 0
-                    : UIState.settings-match("外观 主题 跟随系统 深色 浅色 配色 界面 缩放 放大 缩小 复位 百分比 zoom theme"))
+                    : UIState.settings-match("外观 主题 默认深色 深色 配色 界面 缩放 放大 缩小 复位 百分比 zoom theme"))
                 : SettingsSection {
                     label: "外观";
                     open: true;
@@ -469,7 +469,7 @@ export component SettingsDialog inherits Rectangle {
                         width: parent.width;
                         spacing: Theme.spacing-sm;
                         ThemeCard {
-                            label: "跟随系统";
+                            label: "默认深色";
                             preview: Colors.page;
                             ink: Colors.text-primary;
                             active: UIState.theme == "system";

@@ -66,10 +66,6 @@ export global Colors {
           bg: #1a1216, bg-elev: #221820, bg-elev2: #2c2029, border: #43313a,
           fg: #f0e4e9, fg-muted: #bb9fa9, accent: #fb7185, danger: #f43f5e,
           ok: #34d399, grad2: #1a1216 },
-        { id: "light", name: "明亮", emoji: "☀️", light: true,
-          bg: #f5f6f8, bg-elev: #ffffff, bg-elev2: #eceff3, border: #d9dee5,
-          fg: #24292f, fg-muted: #6b7280, accent: #2f6fed, danger: #d13438,
-          ok: #1a7f37, grad2: #f5f6f8 },
         // ---- the four gradient themes: `bg` is the top stop, `grad2` the
         // bottom one; the page paints the ramp and the panels sit on it ----
         { id: "jade", name: "翡翠绿", emoji: "💎", light: false,
@@ -100,11 +96,10 @@ export global Colors {
         if (id == "amber") { return 4; }
         if (id == "ocean") { return 5; }
         if (id == "rose") { return 6; }
-        if (id == "light") { return 7; }
-        if (id == "jade") { return 8; }
-        if (id == "deepblue") { return 9; }
-        if (id == "twilight") { return 10; }
-        if (id == "crimson") { return 11; }
+        if (id == "jade") { return 7; }
+        if (id == "deepblue") { return 8; }
+        if (id == "twilight") { return 9; }
+        if (id == "crimson") { return 10; }
         return 0;
     }
 

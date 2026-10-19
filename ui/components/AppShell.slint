@@ -73,7 +73,15 @@ export component AppShell inherits Rectangle {
             // ever reach the one that is mounted. (The 同步 page that used to be
             // the third area lives on as the settings page's 同步 tab.)
             if UIState.settings-open : SettingsDialog {}
-            if !UIState.settings-open && UIState.active-area == "organizer" : OrganizerArea {}
+            // The notes toolbar asks the window how wide it is, because the
+            // organizer cannot: its own width is what its rows ask for, and a row
+            // that shrinks itself to fit is a binding loop. 930 px is the area
+            // width at which the toolbar's five fixed parts plus three labelled
+            // tools reach the column's right edge (`OrganizerArea.tools-worded`).
+            if !UIState.settings-open && UIState.active-area == "organizer" : OrganizerArea {
+                tools-worded: root.width
+                    - (UIState.sidebar-open ? Theme.sidebar-width : 0px) >= 930px;
+            }
             if !UIState.settings-open && UIState.active-area != "organizer" : Editor {}
         }
     }

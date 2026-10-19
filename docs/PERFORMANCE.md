@@ -2164,3 +2164,65 @@ a Working Set far below the shell's own floor, or a 0 in a column that cannot be
 channel (write `quit`, read `ok`) is the reversible way to clear it; the
 measured rows above are from a run with the slot empty.
 
+## ADR-0165 · the round storm, measured as a cost curve rather than a leak (2026-10-19)
+
+The report was a Working Set — 6.7 GB on a running instance — and the process was
+gone before the investigation started, so the arm below is not "reproduce 6.7 GB"
+but "reproduce the thing that was being paid for every ten seconds". Fixture: a
+copy of this machine's real `quire.db`, whose `sync.peers` row was **171,509 bytes
+holding 1,076 peers, 1,073 of them this machine's own retired device ids**
+(`windows:DESKTOP-HCPV6H6`, minted per launch before ADR-0142). The only thing the
+arms change is where those 1,073 rows point.
+
+`.scratch/ctl/mkh.mjs` points them at the loopback port this app itself answers on
+(a dial fails in milliseconds: "answered as DESKTOP-HCPV6H6 — the address moved to
+another device"); `.scratch/ctl/mkarmi.mjs` points them at `192.168.88.253`, an
+unused host on this /24, where every dial sits in connect until the 5 s `/info`
+budget cuts it. Sampler `.scratch/ctl/arm.ps1` (5 s cadence, `Get-Process` plus
+`GetGuiResources`), summariser `.scratch/ctl/armstat.mjs`, which reports the
+**drift of the Working Set / Private troughs** rather than their mean — the mean
+hides churn, the floor shows retention.
+
+| arm | build | dial cost | span | CPU % of one core | WS MB | Private MB | Private floor drift |
+|-----|-------|-----------|-----:|------------------:|------:|-----------:|--------------------:|
+| H  loopback fixture | 0.1.39 installed | ~ms | 142 s | **98.6** | 165 ↔ 178 | 80 ↔ 93 | **+5 MB** |
+| I  black-hole fixture | 0.1.39 installed | 5 s | 271 s | 1.4 | 166 ↔ 172 (flat) | 81 ↔ 87 (flat) | 0 MB |
+| H3 loopback fixture | this work tree | ~ms | 272 s | **2.8** | 153 ↔ 158 | 82 ↔ 89 | **−7 MB** |
+| I2 black-hole fixture | this work tree | 5 s | 272 s | 0.3 | 152 ↔ 157 | 81 ↔ 85 | −1 MB |
+
+- **Arm H is the machine the user was looking at.** One core spent 140.1 s of CPU
+  in 142 s of wall clock, and the Private floor climbed 5 MB in 142 s ≈ **2 MB a
+  minute ≈ 3 GB a day**, which is the same order as the 6.7 GB instance that
+  started a couple of days earlier. The Working Set did not ratchet — it sawtooths
+  165 ↔ 178 MB on the round interval and returns to the same trough — so the shape
+  to report is *churn at a fixed cadence whose committed floor rises*, not a stack
+  of reachable objects. Handles (466 → 458) and threads (24 → 17) fall, which is
+  what says nothing is piling up in the kernel.
+- **What each round buys**: `sync_peers()` parses the whole 171 KB blob, and every
+  row that answers calls `sync_set_peers`, which serialises it twice and writes it
+  back as one settings row; `refresh_sync_ui` rebuilds a 1,076-entry `VecModel`.
+  Round count × table length — quadratic, on a ten-second timer, forever, because a
+  failed round re-stamped `last_seen` and the 60 s recency gate could therefore
+  never expire. Post-fix the same fixture costs 2.8 % of a core and the table ends
+  at **504 bytes / 3 rows** (`sync_prune_own_old_ids` retired the 1,073 self rows
+  in one pass; the shadows are kept).
+- **Arm I is the negative result that stopped a fourth change.** The command
+  channel is genuinely unbounded (`mpsc::channel()`, one worker, one cycle at a
+  time), so a round that queues 1,076 dials against a 5 s black hole looked like an
+  unbounded queue. It is not: only a peer that *answers* keeps itself fresh, so
+  enqueue collapses to the drain rate and 271 s of it moved neither Working Set nor
+  Private by a megabyte. What it does leave behind is a **tail** — 12 dials a
+  minute still executing rows the pump had already dropped, ~5,300 of them queued
+  at exit (≈ 7 h). Expensive, not leaky, so no gate went in this round; the number
+  is here for whoever adds one.
+- **Method.** Arms cannot overlap: ADR-0136's single-instance slot makes the second
+  launch hand off and exit, and `Get-Process` on a dead PID returns zeroes without
+  failing — the same trap the section above documents. One arm at a time, and the
+  identity of each one is read from its own first line (`label=… pid=… args=…`)
+  rather than assumed. Fixture builders must delete `quire.db-wal`/`-shm` before
+  copying a fresh main file: a stale WAL replayed onto a new copy makes SQLite call
+  the image `malformed`, and the failure lands in the *fixture*, not the code.
+- **Still not measured**: no heap profile of the 6.7 GB process (it had already
+  exited, and this machine has no WinDbg/WPT), no two-device real-LAN arm — every
+  row above is one machine dialling either itself or a host that never answers.
+
