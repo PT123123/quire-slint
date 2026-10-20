@@ -3913,7 +3913,7 @@ dependencies = [
 
 [[package]]
 name = "quire"
-version = "0.1.42"
+version = "0.1.43"
 dependencies = [
  "embed-resource",
  "encoding_rs",
