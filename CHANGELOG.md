@@ -69,6 +69,21 @@
 - **数字**：`--scene notes --hover 600,140 --settle 400` 对同拍基线做逐行像素 diff——修复前高亮带
   138..257（行本身 84 px + 溢出 36 px = 34 节头 + 2 gutter），修复后 138..221；悬停第二条 224..307，
   单带。control（同图自比）0 带；修复前后两张悬停图互比，差异恰好只剩 221..257 那条溢出带
+- **0.1.43 装机（2026-10-20 22:48 构建）**：这一行早上 07:03 写下的修在 0.1.42 里**不存在**——
+  0.1.42 出包 03:43、`git show` 那份提交的 `note-row` 只有 `y` 和 `width`，所以「修过了怎么还在」
+  答的是版本差，不是修法无效。`just deploy-workshop` 把 a972a78（悬停 + 泄漏 + 侧边栏三条竖切）
+  之上的 bump 打成 f37aefe；产物 `C:\workshop\quire-slint-0.1.43\quire-slint-0.1.43.exe`
+  67,397,120 B、`FileVersion 0.1.43.0`、与 `target\debug\quire-slint.exe` 逐字节相同（`cmp`）
+- **配方又死在第 3 步的 push**：SOCKS 走 22 端口 `Connection timed out during banner exchange`，
+  同一根代理改走 `ssh.github.com:443` 一次推上（`git ls-remote` 从服务端读回 f37aefe）；第 4 步归档
+  是手动补的——重跑配方会再 bump 一次，所以不能重跑
+- **接管那一条腿照旧是真机跑的**：直接启动新版，日志 `14:54:13.584Z session ended` →
+  `14:54:22.568Z session started (pid 134192)`，中间没有 `previous session aborted`，进程表里
+  0.1.42 的 98804 已经不在
+- **发版后从产物复验了一遍数**：`cargo build --features software --bin quire-shot --target-dir target-shot`
+  从 f37aefe 这份工作树重新出探针，`--scene notes --hover 600,140 --settle 400` 读到单带
+  **138..221（84 px）**，`--hover 600,250` 读到 **224..307（84 px）**，同图自比 control 0 带——
+  36 px 的溢出带没了。这条仍然只有数，没有会 FAIL 的机器门
 
 ### 侧边栏开合真正掉帧了：数出来是 1 帧，改完是 11~21 帧（ADR-0168）
 
