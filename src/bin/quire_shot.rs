@@ -8,14 +8,18 @@
 //
 // Build: cargo build --features software --bin quire-shot
 // Usage: quire-shot --out shot.bmp [--scene menu] [--w 1280] [--h 800]
-//        [--click x,y] [--key escape]
+//        [--click x,y] [--key escape] [--hover x,y] [--settle 400]
 //        quire-shot --motion sidebar-toggle --scene default --gif clip.gif
 //                   [--frames 20] [--frame-ms 40] [--gif-w 560] [--seq-dir dir]
 //
-// --click/--key dispatch a real input event through the window after the
-// first render (and after the scene overlay), then re-render and print a
+// --click/--key/--hover dispatch a real input event through the window after
+// the first render (and after the scene overlay), then re-render and print a
 // probe line with the open/closed state of every popup. This is what
 // verifies the close-on-click-outside behavior headlessly.
+//
+// --settle <ms> pumps the animation clock to the given tick after the input,
+// so an interaction shot photographs the *settled* state of every `animate`
+// property instead of its pre-write value (docs/issue/07).
 //
 // --motion captures the *transit* rather than a state. The frames are not
 // screenshots and not a redraw: Slint's animation tick is
@@ -340,6 +344,13 @@ fn run() -> Result<(), String> {
     let w: u32 = parse(&argv, "--w").and_then(|v| v.parse().ok()).unwrap_or(1280);
     let h: u32 = parse(&argv, "--h").and_then(|v| v.parse().ok()).unwrap_or(800);
     let motion = parse(&argv, "--motion");
+    // --settle <ms> (docs/issue/07): the interaction path used to photograph
+    // every `animate` property at its pre-write value, because no clock was
+    // pumped between the input and the redraw. Arming CLOCK at 0 *before* the
+    // dispatch anchors each tween's start at tick 0; the post-input write below
+    // then lands every shot past the longest duration, so a settled interaction
+    // shot shows what the UI displays 400 ms after the pointer arrives.
+    let settle: Option<u64> = parse(&argv, "--settle").and_then(|v| v.parse().ok());
 
     slint::platform::set_platform(Box::new(HeadlessPlatform))
         .map_err(|e| format!("set_platform: {e:?}"))?;
@@ -347,7 +358,7 @@ fn run() -> Result<(), String> {
     // before the component is built: `AppWindow::new()` lays the tree out at the
     // current tick, and a tick that moved backwards to 0 later would trip
     // Slint's monotonic-clock assertion.
-    if motion.is_some() {
+    if motion.is_some() || settle.is_some() {
         CLOCK.with(|c| c.set(Some(0)));
     }
 
@@ -472,6 +483,10 @@ fn run() -> Result<(), String> {
     }
     if interacted {
         probe(&ui, "after-input: ");
+    }
+    if let Some(ms) = settle {
+        CLOCK.with(|c| c.set(Some(ms)));
+        slint::platform::update_timers_and_animations();
     }
     if argv.iter().any(|a| a == "--probe-blocks") {
         probe_blocks(&ui);

@@ -1,5 +1,16 @@
 # 07 · interaction shots never pump the animation clock
 
+**RESOLVED 2026-10-20** — the first candidate fix is in: `quire-shot --settle <ms>`
+arms `CLOCK` at 0 before the input dispatch and, after the interaction, writes the
+given tick and calls `slint::platform::update_timers_and_animations()` before the
+redraw (`src/bin/quire_shot.rs`). It was paid for by a real bug it could not
+otherwise be shown: hovering one note lit the row below it as well, and the hover
+fill is an `animate background`, so without a settled shot the defect had no
+pixels. With `--settle 400` the note-list hover diff measures one band at the
+row's own 84 px after the delegate-height fix (`ui/components/OrganizerArea.slint`,
+`note-row`), versus 84 + 36 px before it. The sweep itself is unchanged — no
+swept scene passes `--settle`, so the baselines keep the pixels they always had.
+
 **Severity: high** — every `--click` / `--key` / `--hover` shot, and therefore the
 popup half of the sweep, captures all 60 `animate` blocks at their pre-write
 value. This is not "a frame mid-tween"; it is systematically the frame *before*

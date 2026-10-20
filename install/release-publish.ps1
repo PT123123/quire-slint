@@ -5,7 +5,9 @@
 # This is the desktop shell's *delivery* — the sibling of the two Android shells'
 # scripts\release-publish.ps1, and the same shape: the patch is bumped, the
 # artifact is built, the bump lands as its own commit, and `gh release create`
-# attaches what was built. `just deploy-workshop` is the other door a release
+# attaches what was built. `just deploy-workshop` (dev profile — the default door)
+# and `just deploy-workshop-release` (this same `--release` exe, archived to
+# C:\workshop) are the other doors a release
 # leaves by (this machine's C:\workshop), and it advances the version too: the two
 # are independent acts, not two halves of one, which is why a version can move
 # without a GitHub release existing for it and the other way round.

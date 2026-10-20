@@ -2606,6 +2606,12 @@ export component OrganizerArea inherits Rectangle {
                                     // beside it always left; the row's own text stops
                                     // short of its doors inside that.
                                     width: parent.width - 6px;
+                                    // Slint's default for a child with no layout role
+                                    // is the *parent's* height, and this Rectangle's
+                                    // parent is the whole delegate — 34 px taller than
+                                    // the row on its first-of-section days. That made
+                                    // `row-ta` reach into the next row and hover both.
+                                    height: self.preferred-height;
                                     note: n;
                                     opened => { UIState.org-note-selected(n.id); }
                                     menu-requested(x, y) => {

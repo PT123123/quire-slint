@@ -144,9 +144,9 @@ pub struct AppState {
     pub favorites_open: Cell<bool>,
     pub recents_open: Cell<bool>,
     /// Startup notices (abort banner, backup restore, library move) — more
-    /// than one can queue; the controller drains them as one line and shows
+    /// than one can queue; the controller reads them as one line and shows
     /// it once in the shell.
-    db_notice: RefCell<Vec<String>>,
+    db_notice: RefCell<NoticeQueue>,
     /// Currently open page (0 = none / empty workspace).
     pub open_page: Cell<i32>,
     /// Go Back / Go Forward stacks (SPEC §十六). Session-only: a restart
@@ -416,6 +416,49 @@ struct CachedImage {
 /// grows, and §二十二's low-RAM promise dies the first time someone pastes a
 /// hundred screenshots.
 const MAX_ATTACHMENT_CACHE_BYTES: usize = 32 * 1024 * 1024;
+
+/// How many notice lines a session can hold. The queue is never drained —
+/// [`AppState::take_db_notice`] joins it and leaves it, which is what lets a
+/// test read back "this command said nothing new" — so a read that fails on
+/// every projection would otherwise append one `String` per attempt forever.
+/// Same tail length the sync and MCP logs keep (§ see `sync_log_push`).
+const MAX_DB_NOTICE_LINES: usize = 50;
+
+/// The notice line's queue, with the only way in being `push`. Eighteen call
+/// sites write it — every failed database read among them — and a projection
+/// that keeps failing is a per-frame writer, so the two rules that keep the
+/// queue from growing forever belong to the type rather than to each site: a
+/// line the bar already shows is not queued twice, and the queue keeps a tail.
+struct NoticeQueue(Vec<String>);
+
+impl NoticeQueue {
+    fn push(&mut self, line: String) {
+        if self.0.last().is_some_and(|last| *last == line) {
+            return;
+        }
+        self.0.push(line);
+        while self.0.len() > MAX_DB_NOTICE_LINES {
+            self.0.remove(0);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn last(&self) -> Option<&String> {
+        self.0.last()
+    }
+
+    fn join(&self, sep: &str) -> String {
+        self.0.join(sep)
+    }
+}
 
 /// One place the back stack can hold you (SPEC §四十一, ADR-0110). The
 /// desktop has two top-level areas, and a history that only knew about pages
@@ -1067,13 +1110,13 @@ impl AppState {
             favorites_open: Cell::new(false),
             recents_open: Cell::new(false),
             ui: RefCell::new(None),
-            db_notice: RefCell::new(
+            db_notice: RefCell::new(NoticeQueue(
                 attachment_notice
                     .into_iter()
                     .chain(db_notice_read)
                     .chain(org_notice_read)
                     .collect(),
-            ),
+            )),
             all_commands,
             doc: RefCell::new(doc),
             history: RefCell::new(History::default()),
@@ -1795,13 +1838,19 @@ impl AppState {
         self.set_search_query(query);
     }
 
+    /// Say something on the database notice line. Every speaker goes through
+    /// [`NoticeQueue::push`], which is where the two rules that keep the queue
+    /// bounded live.
     pub fn set_db_notice(&self, notice: String) {
         self.db_notice.borrow_mut().push(notice);
     }
 
-    /// Drain everything queued as one line. Startup can stack several facts
+    /// Read the whole queue as one line. Startup can stack several facts
     /// (the previous session aborted, a backup was restored, the library
-    /// moved); they read better joined than overwriting each other.
+    /// moved); they read better joined than overwriting each other. Nothing is
+    /// drained — the queue is also the record a headless session proves a
+    /// command's notice from, and `take` twice on an unchanged queue must say
+    /// the same thing (see the notice test in §D10).
     pub fn take_db_notice(&self) -> Option<String> {
         let queue = self.db_notice.borrow_mut();
         if queue.is_empty() {
@@ -4071,9 +4120,14 @@ impl AppState {
         let had_open = removed.contains(&self.open_page.get());
         {
             let mut doc = self.doc.borrow_mut();
+            let mut gone: Vec<i32> = Vec::new();
             for r in &removed {
+                gone.extend(doc.page_blocks(core_page_id(*r)).iter().map(|b| b.id.0 as i32));
                 doc.drop_page(core_page_id(*r));
+                self.page_order.borrow_mut().remove(r);
             }
+            drop(doc);
+            self.forget_block_projection(&gone);
         }
         let mut changes = vec![Change::PageDeleted {
             id: PageId(id as u32 as u64),
@@ -4104,6 +4158,43 @@ impl AppState {
             self.reproject_blocks();
         }
         had_open
+    }
+
+    /// Drop every per-block cache for blocks that no longer exist. Block ids
+    /// come from a watermark that only moves forward, so a deleted block's id is
+    /// never handed to another one — without this, a session that opens and
+    /// deletes libraries keeps each one's realized row models (`db_windows` holds
+    /// four `Rc<VecModel>` per block) and the six session-state maps beside it.
+    ///
+    /// The view-switch paths already `remove` a block when *that* block's window
+    /// changes shape; this is the other door, the one a page delete opens, and it
+    /// is a no-op for a block nothing ever looked at.
+    fn forget_block_projection(&self, blocks: &[i32]) {
+        if blocks.is_empty() {
+            return;
+        }
+        let gone: std::collections::HashSet<i32> = blocks.iter().copied().collect();
+        self.db_windows
+            .borrow_mut()
+            .retain(|block, _| !gone.contains(block));
+        self.db_active_view
+            .borrow_mut()
+            .retain(|block, _| !gone.contains(block));
+        self.db_anchor
+            .borrow_mut()
+            .retain(|block, _| !gone.contains(block));
+        self.db_cal_month
+            .borrow_mut()
+            .retain(|block, _| !gone.contains(block));
+        self.db_gallery_per_row
+            .borrow_mut()
+            .retain(|block, _| !gone.contains(block));
+        self.db_form
+            .borrow_mut()
+            .retain(|block, _| !gone.contains(block));
+        self.db_search
+            .borrow_mut()
+            .retain(|block, _| !gone.contains(block));
     }
 
     /// The page a `Page`-kind block points at, if it is still there.
@@ -20035,6 +20126,35 @@ mod tests {
         );
     }
 
+    /// The queue's own bound. Every failed database read writes it, and
+    /// `take_db_notice` deliberately never drains it, so a read that fails on
+    /// every projection would grow the Vec one `String` per frame forever. The
+    /// two rules that stop that are `NoticeQueue::push`'s: a repeated line is
+    /// not queued twice, and the queue keeps a tail.
+    #[test]
+    fn the_notice_queue_collapses_repeats_and_keeps_a_tail() {
+        let state = super::AppState::new(&plain_args(), None);
+        for _ in 0..1000 {
+            state.set_db_notice("数据库读取失败：database is locked".to_string());
+        }
+        assert_eq!(
+            state.db_notice.borrow().len(),
+            1,
+            "a thousand frames of one failure say it once"
+        );
+
+        // Different failures are different facts, so they all belong — until the
+        // tail cuts them off, oldest first.
+        for i in 0..100 {
+            state.set_db_notice(format!("第{i}次失败"));
+        }
+        let line = state.take_db_notice().expect("the queue has the tail");
+        assert!(line.contains("第99次失败"), "{line}");
+        assert!(line.contains("第50次失败"), "{line}");
+        assert!(!line.contains("第49次失败"), "{line}");
+        assert!(!line.contains("第0次失败"), "{line}");
+    }
+
     /// The other half of "不能静默吞输入": one gesture, one message. The drag
     /// hover asks `can_move_block_to` once per frame of the pointer's travel,
     /// so the check that hides the drop line stays quiet while the drop that
@@ -21902,6 +22022,38 @@ mod tests {
         assert_eq!(
             drawn(&state, tasks, 0, column_of(&state, tasks, total)),
             "four"
+        );
+    }
+
+    /// A page that is gone must not leave its database window behind. Block ids
+    /// are watermark-issued and never handed to a second block, so a cache keyed
+    /// by them only shrinks when a delete says so — and one entry is four
+    /// realized `Rc<VecModel>`s plus the rows they hold.
+    #[test]
+    fn deleting_a_page_retires_its_database_window() {
+        use crate::testing::ScratchDir;
+
+        let dir = ScratchDir::new("delete-retires-block-cache");
+        let state = super::AppState::new(&plain_args(), Some(scratch_repo(&dir)));
+        let page = state.create_page(None);
+        let block = a_database(&state);
+        let row = a_row(&state, block);
+        name_a_row(&state, block, row, "one row, one window");
+        state.reproject_blocks();
+        assert!(
+            state.db_windows.borrow().contains_key(&block),
+            "the projection realized a window for the block"
+        );
+
+        state.delete_page(page);
+
+        assert!(
+            state.db_windows.borrow().is_empty(),
+            "and the delete retires it with the page"
+        );
+        assert!(
+            state.db_search.borrow().is_empty() && state.db_active_view.borrow().is_empty(),
+            "the six session-state maps keyed by the same block go too"
         );
     }
 

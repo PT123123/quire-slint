@@ -1,7 +1,12 @@
 # Deploy a release into the workshop's archive: one folder per release,
 # C:\workshop\quire-slint-<version>\quire-slint-<version>.exe.
 #
-#   powershell -NoProfile -ExecutionPolicy Bypass -File install\deploy-workshop.ps1
+#   powershell -NoProfile -ExecutionPolicy Bypass -File install\deploy-workshop-release.ps1
+#
+# **This is the `--release` variant** — the audited-size exe. The default deploy
+# is `just deploy-workshop`, which runs the identical ceremony on the dev profile
+# and costs seconds instead of the 9-11 minutes measured here (decided 2026-10-20;
+# `install\deploy-workshop.ps1` is that one).
 #
 # The workshop directory holds one folder per release, named <name>-<version>
 # (aura-1.2.6, aw-qtui-0.1.36), filled with what that build needs to run. Quire's
@@ -30,7 +35,7 @@
 # app is run from, and a folder that a deploy fought a running exe for was
 # exactly the folder that never should have held one.
 #
-# `just deploy-workshop` is the entry point, and this script is the whole flow.
+# `just deploy-workshop-release` is the entry point, and this script is the whole flow.
 # The steps are ordered so the folder holds a binary that says <version>:
 #
 #   1. [package] version's patch +1 in Cargo.toml. The folder is named after the

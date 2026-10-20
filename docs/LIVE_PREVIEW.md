@@ -116,6 +116,11 @@ slint-viewer --auto-reload ui/AppWindow.slint
   PNG，供人**事后**比对。它是回归工具，不是迭代工具 —— 改完再跑，跑完再看。
 - **`--quick-note`**（`main.rs`）：跑真实事件循环的验证门。它能证明一个按钮
   真的能被点开，但要看「好不好看」，还是得用眼睛看屏幕。
+- **`--frame-cadence` + `just cadence`**（`main.rs`、`benchmarks/scripts/frame_cadence.ps1`，ADR-0168）：
+  也是真窗口真事件循环，但它不看画面，看**节拍**——每帧一个时间戳，数一次 220 ms 抽屉补间到底画了几帧。
+  探针跑 3 轮、按中位数汇总，再看对照臂（文档区，贴着 22 帧天花板）判这台机器当轮有没有在压帧；
+  最坏手臂低于 6 帧 FAIL。「动画不顺畅」这种话用眼睛只能判「卡不卡」，用它能判「几帧」。它需要一台真显示器（Slint 按刷新率节流重绘），
+  所以不能像 `just shot` 那样 headless。
 
 live preview 补的是这三者之间的空档：**改完立刻看**。
 
@@ -129,8 +134,10 @@ live preview 补的是这三者之间的空档：**改完立刻看**。
 2. 它的 target dir 要和默认构建**分开**（比如 `target-live`），理由和
    `just shot` 用 `target-shot` 完全一样（ADR-0134）：live-preview 是另一个
    feature set，混在一个 target dir 里会各自留一份，再叠出几十 GB。
-3. 明确它是开发期设施：`just check` / `deploy-workshop` / `release-publish`
+3. 明确它是开发期设施：`just check` / `deploy-workshop-release` / `release-publish`
    都不带这个 flag，release 绝不能开着它（官方文档：不要 ship 开着的构建）。
+   （2026-10-20 起默认的 `just deploy-workshop` 是 dev 档案那条，名字因此从
+   `deploy-workshop` 挪到了 `deploy-workshop-release`。）
 
 ## 尚未验证的部分
 

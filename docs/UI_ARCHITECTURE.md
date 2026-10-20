@@ -283,7 +283,10 @@ caret in cell three or nowhere, so an editing cell that forgets to mirror the
 live text shows up as a diff between them. The grid's hover toolbar is *not* in
 the sweep — `quire-shot --hover x,y` exists (ADR-0031) and the strip is checked
 with a hand-run shot, because a swept scene that parks the pointer would make
-every later scene's hover state dependent on it.
+every later scene's hover state dependent on it. Such a hand-run hover shot must
+also pass `--settle 400`: the hover fills are `animate` properties and the
+interaction path used to photograph them at their pre-write value (issue 07), so
+without a settled tick an `--hover` diff can read 0 px while the hover is on.
 `columns` and `columns-3` are the layout pair (ADR-0032): one line converted into
 a two-box layout with a word in each box, and the same layout after the strip's
 "Add column". They are a pair because the whole point of the scene is the
@@ -613,6 +616,35 @@ Two things about the clock are worth knowing before adding a motion:
   `clips.ps1` sets `SLINT_SLOW_ANIMATIONS` (default 4) and the README says the
   clips play at a quarter speed. A GIF that hid that would be advertising a
   duration the app does not have.
+
+**An `animate` block with no `easing:` is linear**, and a linear *layout* tween
+reads as 卡 even at a solid 60 fps — that is what ADR-0166 measured on the
+sidebar. `clips.ps1`'s distinct-frame count is the floor, not the shape: a
+straight-line tween passes it as happily as an eased one.
+`benchmarks/scripts/motion_edges.ps1 -SeqDir <dir>` reads the animated edge out
+of a captured motion's frames, so the speed curve is a number: the same 220 ms
+read 12/12/12… px per frame before and 2/7/11/16/19/20/19/16/11/8 after.
+
+**A clip is not a cadence, and 卡 has a second cause.** The capture above runs the
+shot binary with the animation clock advanced by hand, so it proves the app
+*interpolates*; it cannot prove the running app *paints* those frames. ADR-0166
+concluded "no frames were dropped" from a timer's own cadence and was wrong for the
+installed build: counting painted frames (`--frame-cadence`, `just cadence`,
+ADR-0168) showed the sidebar's 220 ms drawer painting **one** frame in the dev-profile
+exe, which is a teleport wearing an easing curve. Two rules come out of that:
+
+* a layout `animate` must not leave its neighbour to re-flow every frame. The drawer's
+  own content binds the *target* width and lets `clip` cut the edge; whatever the drawer
+  resizes (here `OrganizerArea`) binds the animated `parent.width`, so a one-pixel width
+  change re-breaks every wrapped row's text. Where that measure is also the row's height
+  (`note-row.preferred-height`, `OrganizerArea.slint:2594`), the frame cost is per visible
+  row, per frame — a mean 8.5-10.9 ms there against 1.7-2.0 ms with the docs area mounted,
+  peaking at 24.7 ms. Single-line `elide` rows have a width-independent height,
+  so they cache and the same tween runs at the refresh ceiling;
+* the repaint ceiling is the monitor, not 60: Slint 1.18's winit backend throttles every
+  redraw to `current_monitor().refresh_rate_millihertz()` (10 ms on this 100 Hz panel, so
+  22 frames in 220 ms). A frame gap needs reading against its paint duration — a long gap
+  with a short paint is the event loop, not the renderer.
 
 Motions live in `controller::apply_motion` beside the scenes in `apply_scene`,
 and a motion names only the properties it wants moved — `set_org_drop_list` and

@@ -1,8 +1,12 @@
 # 构建加速方案
 
-「`just deploy-workshop` 要 2 分半」这件事已经被问过两次，两次的答案都是
+「`just deploy-workshop-release` 要 2 分半」这件事已经被问过两次，两次的答案都是
 「这是一个 crate 的 codegen，不是冷缓存」。本文把这句话拆开：**哪些部分已经
 被证明、哪些杠杆还开着、哪些被提过但其实不成立**，并给出分级的执行顺序。
+
+（2026-10-20 的名字更正：`just deploy-workshop` 现在指 **dev 档案**那一条，动一个 `.rs` 是 11–15 秒；
+本文算的是 `deploy-workshop-release` 的 `--release` 代价。dev 那一棵树在 2026-10-20 起把**依赖**编成
+优化的，改 profile 当轮要先付一次 1040 秒的全树重编，见 §12。）
 
 状态：**评估与方案，未接入**（截至 `quire` 0.1.24）。本文没有改任何构建配置，
 下面任何一条被采纳都要单独走一次「改代码 + 记 ADR」。文末的
@@ -161,7 +165,7 @@ VERDICT: Slint frontend did NOT re-run
 **R2 · 版本号 bump 必然重编整个 crate（每次发版白付 2 分 30 秒）**
 `build.rs` 把 `CARGO_PKG_VERSION` 打进 `OUT_DIR/quire.rc`，`justfile:57-58`
 记录的顺序因此是刻意的：bump 必须先于 build。代价是每次
-`deploy-workshop` / `release-publish` 都从 Fresh 掉回全编。**这是设计使然，
+`deploy-workshop-release` / `release-publish` 都从 Fresh 掉回全编。**这是设计使然，
 不是缺陷** —— exe 的版本资源块必须和 `Cargo.toml` 一致。
 
 **这一条要与 ADR-0149 合读才完整**：那份 ADR 用 fingerprint 日志证明 bump **只**
@@ -413,3 +417,30 @@ Rust 字符串，所以最终二进制必须再编一次。第二轮耗时比第
 - 旧数据与本次数字只有在机器、profile、缓存冷热状态及命令相近时才可直接比较。
   README 中 GPUI 的 55.03s 是增量 Release build；Slint 的 14m46s 是两个确认完成的
   patch Release build，构建类型不同，必须保留这个限定。
+
+## 12. dev 档案的依赖改成优化编译：一次 1040 s，之后不变（2026-10-20，ADR-0168）
+
+第 7 行那句「`just deploy-workshop` 现在指 dev 档案那一条，几秒钟就完」在 2026-10-20 之后要加一个
+限定：**几秒钟说的是改动之后的增量构建**，改 profile 的那一轮本身要先付一次全树重编。
+
+`Cargo.toml` 加了 `[profile.dev.package."*"] opt-level = 2, debug = 0`（理由与逐臂帧数在
+PERFORMANCE.md 的 ADR-0168 一节：侧栏 220 ms 补间在未优化依赖下只画 1 帧）。按上面「以后记数的边界」
+那四条记录：
+
+| 命令 | profile / features | 树的状态 | 墙钟 | 退出码 |
+| --- | --- | --- | ---: | --- |
+| `cargo build --bin quire-slint` | dev / femtovg（默认） | 改 profile 后，依赖全冷 | 1040 s | **101** |
+| `cargo build --bin quire-slint` | 同上 | 依赖已绿，只差 `quire` | 12 s | 0 |
+| `cargo build --bin quire-slint` | 同上 | 动 `.rs` 的常态增量 | 11–15 s | 0 |
+| `cargo check --workspace --all-targets` | dev / 全 targets | 242 个 unit 重跑 | 205 s | 0 |
+
+那一次 101 **不是构建问题**：1040 s 里 325 个依赖 crate 全部编完，红在最后一步 `quire` 自己身上，
+因为同一个文件正在被编辑（探针的一处 `ModelRc::len`）。按规矩它记作失败尝试，不进成功均值；绿的
+是紧随其后的 12 s 那一次。
+
+产物与磁盘：exe 从 85,958,144 缩到 67,369,472 字节（依赖不带 debuginfo），`target/debug` 净多约
+3 GB（旧指纹的单元不会被回收，ADR-0134 那件事的小号版本）。C: 空闲从 38 GB 掉到 35 GB。
+
+没有新增第三个 profile。`just check` 注释里记的陷阱——换 profile 会作废整张 unit graph——正是这里
+的 1040 s；把它做成 `dist` 档案等于让 dev、dist、release、target-shot 四棵树并存，所以选择让 dev
+这一棵树自己把依赖编快，四棵树还是一棵都别多。

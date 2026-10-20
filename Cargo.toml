@@ -135,6 +135,28 @@ path = "src/bin/quire_typing.rs"
 [profile.dev]
 debug = 1
 
+# The other half of the sidebar's frame cost is here, not in the UI code
+# (ADR-0168). Measured 2026-10-20 with the `--frame-cadence` harness, same window,
+# same library, same 220 ms drawer tween: a painted frame in this profile costs
+# 100-480 ms, the same frame in `--release` costs 5-12 ms of paint. That ratio is
+# the renderer and the layout traversal, which are *dependencies* — Slint's item
+# tree walk, its text shaping and wrap measurement, femtovg's tessellation. None
+# of it is the shell's own code.
+#
+# So the dependencies are built optimized and the shell is not. `just run`,
+# `just check` and `just deploy-workshop` keep the same single `target/debug` tree
+# (a profile switch is what invalidates all 325 crates, and the fast deploy must
+# stay fast), and an edit to this crate is still the few seconds of incremental
+# codegen and ~11 s of link it was before.
+#
+# `debug = 0` for the dependencies is not a retracement of ADR-0134: that decision
+# is about reading a backtrace out of a log, and the frames worth reading there are
+# `quire`'s own, which keep `debug = 1`. Dependency frames still resolve to a
+# function name from the symbol table; they lose file/line precision.
+[profile.dev.package."*"]
+opt-level = 2
+debug = 0
+
 [profile.release]
 codegen-units = 1
 lto = "thin"

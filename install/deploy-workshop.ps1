@@ -1,27 +1,38 @@
-# Deploy a release into the workshop's archive, built in the *dev* profile.
-# Same destination and same ceremony as deploy-workshop.ps1; the only step that
-# changes is the build.
+# Deploy a release into the workshop's archive, built in the *dev* profile. This
+# is the default deploy. Same destination and same ceremony as
+# deploy-workshop-release.ps1; the only step that changes is the build.
 #
-#   powershell -NoProfile -ExecutionPolicy Bypass -File install\deploy-workshop-fast.ps1
+#   powershell -NoProfile -ExecutionPolicy Bypass -File install\deploy-workshop.ps1
 #
-# Why this exists: `just deploy-workshop` builds `--release`, and `[profile.release]`'s
-# `codegen-units = 1` + thin LTO spends ~198s of codegen on the single `quire` crate
-# plus the link — a repeat deploy is measured at 9-11 minutes (docs/BUILD_PERFORMANCE.md,
-# and the numbers PERFORMANCE.md / the release recipe still call "~2m30s"). When all a
-# deploy needs is a current exe on the workshop shelf, that optimization cost is not what
-# is being asked for. This recipe compiles the same version into the same archive in the
-# dev profile instead.
+# Why this is the default: `deploy-workshop-release` builds `--release`, and
+# `[profile.release]`'s `codegen-units = 1` + thin LTO spends ~198s of codegen on
+# the single `quire` crate plus the link — a repeat deploy is measured at 9-11
+# minutes (docs/BUILD_PERFORMANCE.md, and the numbers PERFORMANCE.md / the release
+# recipe still call "~2m30s"). When all a deploy needs is a current exe on the
+# workshop shelf, that optimization cost is not what is being asked for. This
+# script compiles the same version into the same archive in the dev profile
+# instead, so the shelf gets a new numbered folder in seconds. Ask for
+# `just deploy-workshop-release` when the archived bytes must be the audited size.
 #
-# Dev, not a hybrid. `just check`'s comment records the trap: a one-off profile spliced
-# with `--config` (dev + release's lto/codegen-units/strip) makes cargo see a new
-# fingerprint and rebuild all 325 dependency crates. This script does the opposite — it
-# asks for the plain `dev` profile, the very tree `just build` and `just run` already keep
-# warm, with no override. So the only unit the bump invalidates is `quire` itself, and in
-# dev that is a few seconds of codegen and an ~11s link. The release and shot trees are
-# untouched; nothing here competes for `just build`'s incremental cache.
+# Dev, not a hybrid, and not spliced with `--config`. `just check`'s comment records the
+# trap: a one-off profile (dev + release's lto/codegen-units/strip passed via `--config`)
+# makes cargo see a new fingerprint and rebuild all 325 dependency crates *every time it
+# is used*. This script asks for the plain `dev` profile, the very tree `just build` and
+# `just run` already keep warm, with no override. So the only unit a bump invalidates is
+# `quire` itself, and in this tree that is a few seconds of codegen and an ~11s link.
+# The release and shot trees are untouched; nothing here competes for `just build`'s
+# incremental cache.
 #
-# Everything else is deploy-workshop.ps1 verbatim, because the fast deploy is still a
-# *recorded release*, not a scratch drop:
+# One thing inside that dev tree did change on 2026-10-20 (ADR-0168):
+# `[profile.dev.package."*"] opt-level = 2, debug = 0` makes the *dependencies* build
+# optimised while `quire` stays unoptimised. That is a Cargo.toml edit, not a flag, so it
+# is the same stable tree with the same fingerprints — it cost one 1040 s rebuild when the
+# line went in and nothing since. It is why this exe can animate: with the dependencies at
+# opt-level 0 the sidebar's 220 ms drawer painted **one frame** and teleported; measured on
+# the same fixture it now paints 9-22, see PERFORMANCE.md's ADR-0168 section.
+#
+# Everything else is deploy-workshop-release.ps1 verbatim, because the fast deploy is
+# still a *recorded release*, not a scratch drop:
 #
 #   1. [package] version's patch +1 in Cargo.toml — the same guard against bumping the
 #      wrong table, the same read-back before anything expensive.
@@ -33,7 +44,8 @@
 #   4. target\debug\quire-slint.exe copied into C:\workshop\quire-slint-<version>\ under
 #      the versioned name.
 #
-# One rule carried over from deploy-workshop.ps1: every character inside a Write-Output or
+# One rule carried over from deploy-workshop-release.ps1: every character inside
+# a Write-Output or
 # a throw is ASCII. Windows PowerShell 5.1 reads a BOM-less script as ANSI (this machine's
 # codepage is GBK), so a non-ASCII character in a *string literal* reaches the console as
 # mojibake. Comments are free; messages are not.

@@ -82,10 +82,14 @@ export component Sidebar inherits Rectangle {
     // The drag writes the width every mouse-move; a tween on each of those
     // frames is a rubber band, so the animation runs only for the open/close
     // toggle — which is exactly when sidebar-resizing is off.
-    animate width { duration: UIState.sidebar-resizing ? 0ms : Theme.duration-normal; }
+    animate width { duration: UIState.sidebar-resizing ? 0ms : Theme.duration-normal; easing: ease-in-out; }
     background: Colors.sidebar;
 
     VerticalLayout {
+        // The tree is laid out at its full width and the Rectangle's clip cuts
+        // it at the animated edge — a drawer sliding under a mask. Binding this
+        // to the animated `parent.width` instead would re-wrap every row each
+        // frame, and the squeeze is what read as 卡.
         width: Theme.sidebar-width;
         padding-left: Theme.spacing-sm;
         padding-right: Theme.spacing-sm;

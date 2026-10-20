@@ -144,3 +144,29 @@ Four things that this adds to the shape described above:
 - Whichever shape: give `bench_matrix.ps1`/`startup_bench.ps1` a pre-flight check
   that fails fast with "a Quire session is already running" instead of hanging on a
   dialog the harness will never see.
+
+## Where this stands after ADR-0169 (2026-10-20)
+
+Two of the four candidates are now moot or taken, and the record needed correcting on
+one point of fact.
+
+- **"no timeout" is no longer true.** `platform::notify` (`src/platform/mod.rs:97`)
+  calls `MessageBoxTimeoutW`, so a refused launch costs 8 seconds and one exit code,
+  not a person at the keyboard — the 0.1.42 install notes measured exactly that (8.54 s,
+  exit 0). The shape the symptom section describes (a process alive 11 minutes because a
+  nobody-clicked-it dialog) is what the timeout closed; what remains is that the launch
+  still ends as a *silent refusal* to a script.
+- **Candidate 2, narrowed: taken.** `src/main.rs:612` treats `--auto-exit` **paired with**
+  `--db` as the harness run `--quick-note` already was, so a probe that names its own
+  library and its own deadline leaves the pipe alone and runs beside the user's session.
+  The pairing is the whole safety: `--auto-exit` alone still claims, because that run
+  opens the default library, and a second writer on a file a live session holds is the
+  thing ADR-0136 exists to prevent. A double-click (argv carrying a bare path) is
+  unchanged — it still gets the dialog.
+- **What drove it was not cosmetics.** `benchmarks/scripts/leak_gate.ps1`'s drift arm
+  read one sample: the probe lost the claim, showed the 8 s notice, exited, and never
+  opened the library it was told to sample. A memory gate that cannot run while the app
+  is running is a gate that only passes on the machine nobody is using.
+- **Still open:** candidate 1 for the double-click path (the box is modal for a person
+  who is not there), the non-zero exit code for a refused launch, and the fact that a
+  `.md` handed to a refused launch is dropped rather than forwarded.

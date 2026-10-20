@@ -1848,6 +1848,16 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
         Box::leak(Box::new(slint::Timer::default()));
     let org_task_done_timer: &'static slint::Timer =
         Box::leak(Box::new(slint::Timer::default()));
+    // The same one-clock rule for the two beats that a *gesture* starts: a
+    // keystroke in the search box arms the poll, a card landing arms the settle
+    // fade. `Timer::start` on a running timer replaces the callback in its own
+    // slot, so re-arming one handle costs nothing — minting a fresh leaked
+    // `Timer` per keystroke (or per 30 ms tick of an in-flight query) is a
+    // handle nobody can ever free, and a typing session is sixty a second.
+    let search_poll_timer: &'static slint::Timer =
+        Box::leak(Box::new(slint::Timer::default()));
+    let org_settle_timer: &'static slint::Timer =
+        Box::leak(Box::new(slint::Timer::default()));
 
     // The sync rounds asked for and not yet answered. Declared here rather than
     // inside `start_sync` because the dialog's two open paths rebuild the rows
@@ -3021,7 +3031,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
             let q = g.get_search_query().to_string();
             s.set_search_query(&q);
             g.set_search_focus(0);
-            poll_arm(&gw, &s);
+            poll_arm(search_poll_timer, &gw, &s);
         });
     }
 
@@ -6880,10 +6890,13 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
             // steps of a one-shot are feedback, not an idle loop.
             g.set_org_settle_task(id);
             g.set_org_settle_alpha(0.9);
-            let timer: &'static slint::Timer = Box::leak(Box::new(slint::Timer::default()));
+            // One handle for every landing (see `org_settle_timer` in `wire`):
+            // a second card dropped mid-fade restarts the same clock rather than
+            // arming a second one, which is also what keeps the ring on the card
+            // that moved last.
             let started = std::time::Instant::now();
             let gw = gw.clone();
-            timer.start(
+            org_settle_timer.start(
                 slint::TimerMode::Repeated,
                 std::time::Duration::from_millis(40),
                 move || {
@@ -6892,7 +6905,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
                     };
                     let elapsed = started.elapsed().as_millis() as f32;
                     if elapsed >= 620.0 {
-                        timer.stop();
+                        org_settle_timer.stop();
                         g.set_org_settle_alpha(0.0);
                         g.set_org_settle_task(-1);
                     } else {
@@ -7774,12 +7787,16 @@ fn org_scene_seed(state: &Rc<AppState>) -> OrgScene {
 }
 
 /// Arm the one-shot poll timer for an in-flight async search. Each poll
-/// that comes back empty re-arms; a landed result stops the cycle.
-fn poll_arm(gw: &slint::Weak<UIState<'static>>, s: &Rc<AppState>) {
+/// that comes back empty re-arms; a landed result stops the cycle. One handle
+/// for the whole session — see `search_poll_timer` in `wire`.
+fn poll_arm(
+    t: &'static slint::Timer,
+    gw: &slint::Weak<UIState<'static>>,
+    s: &Rc<AppState>,
+) {
     if !s.search_in_flight() {
         return;
     }
-    let t: &'static slint::Timer = Box::leak(Box::new(slint::Timer::default()));
     let gw = gw.clone();
     let s = s.clone();
     t.start(
@@ -7791,7 +7808,7 @@ fn poll_arm(gw: &slint::Weak<UIState<'static>>, s: &Rc<AppState>) {
                 s.search.set_vec(rows);
                 g.set_search_focus(0);
             } else if s.search_in_flight() {
-                poll_arm(&gw, &s);
+                poll_arm(t, &gw, &s);
             }
         },
     );

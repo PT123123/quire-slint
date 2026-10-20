@@ -374,7 +374,9 @@ measured outcome rather than an assumption.
 
 ## Build cost (2026-09-25)
 
-What `just deploy-workshop` actually pays, and whether any of it is avoidable.
+What `just deploy-workshop-release` actually pays, and whether any of it is avoidable.
+(The default `just deploy-workshop` is the dev-profile door since 2026-10-20 and does
+not pay this.)
 The question was raised as "the build takes too long — check it, and turn up
 incremental compilation"; the answer is that the 2m30s is one crate and the
 profile is already the fastest setting for it.
@@ -2226,3 +2228,224 @@ hides churn, the floor shows retention.
   exited, and this machine has no WinDbg/WPT), no two-device real-LAN arm — every
   row above is one machine dialling either itself or a host that never answers.
 
+## ADR-0168 · the drawer's frames were spent in the dependency tree (2026-10-20)
+
+The report this time was not "it janks" but **"the animation is not smooth, it
+looks like it has few frames"** — a claim that is countable, so it was counted
+instead of read as a velocity curve (which is what ADR-0166 did, and why that ADR's
+"no frames were dropped" needs its correction read below).
+
+**New harness, kept in the tree.** `--frame-cadence` (src/main.rs) mounts a scene on
+a 900 ms beat and stamps *every painted frame* from
+`Window::set_rendering_notifier` — one mark per `AfterRendering`, one duration per
+`BeforeRendering → AfterRendering`. `benchmarks/scripts/frame_cadence.ps1` (`just cadence`)
+copies this machine's live library to a temp fixture, runs the probe **three times**, and
+prints per arm the median number of frames painted inside the 220 ms tween plus the mean
+gap. Repeating is not decoration: the same build on the same arm read **8, 11, 11, 14, 14
+and 17** frames across six runs on 2026-10-20, and 4 while the machine was busy, so a
+single run reports the machine's mood rather than the drawer's. The verdict is gated on
+arm E first — if the control arm is off its ceiling, the run is reported as contended and
+the numbers below it are not believed. The gap/paint split is the whole method: a 500 ms
+gap whose paint is 7 ms is the event loop being busy, a 25 ms paint is the renderer being
+busy, and the two have different fixes.
+
+**The ceiling, measured rather than assumed.** Slint 1.18's winit backend routes every
+`request_redraw()` through `TimerBasedFrameThrottle`, whose interval is the monitor's
+refresh rate read from `EnumDisplaySettingsExW`. The probe prints that from inside the
+window it is animating: `\\.\DISPLAY2 2560x1440 @ 100 Hz → 10 ms`. So a 220 ms drawer
+tween has a 22-frame ceiling on this machine, not the 13 frames a 60 Hz read would
+suggest — and arm E below is at 10.3–10.4 ms/frame, i.e. at the ceiling.
+
+| arm (what is mounted while the drawer moves) | before, dev deps unoptimized | after, `[profile.dev.package."*"] opt-level = 2` | mean gap after |
+|---|---|---|---|
+| A 笔记/全部, long list, no body | **1 / 1** frames close/open | 11–14 / 18–20 | 15.6–18.1 / 11.3–12.0 ms |
+| B 笔记/今天, detail body open | **2 / 1** | 20 / 19 | 10.7–11.0 / 11.0–11.4 ms |
+| C 笔记/已完成, empty list | not measured | 20 / 19–20 | 10.9–11.1 / 10.5–10.7 ms |
+| D 任务 | not measured | 21 / 21 | 10.1–10.4 / 10.3–10.4 ms |
+| E 文档区 (docs area, control arm) | 11 / 10 | 21 / 21 | 10.3–10.4 / 10.3 ms |
+
+Each "after" cell is the median of 3 runs, from two passes made the same day. One
+variable changed between the columns: the Cargo.toml profile. Same UI code, same fixture,
+same 2560x1350 window. A drawer that paints **1 frame** across its whole 220 ms tween is a
+teleport, which is exactly what "few frames" describes.
+
+**Attribution.** Per-frame paint after the change averages 1.7–2.0 ms (peak 3.5 ms) with
+the docs area mounted (arm E) and 8.5–10.9 ms (peak 24.7 ms) with the note list mounted
+(arm A) — same renderer, same window, so the difference is Slint's text measurement plus
+femtovg's tessellation, both of which live in *dependencies*. `cargo build --bin quire-slint -v` confirms the scope of
+the override: the `quire` crate's own rustc line carries no `-C opt-level` (so it stays
+at 0, and `package."*"` does not reach workspace members), and its rebuild is still
+11–15 s. Dependency frames resolve to names but not lines, which is the price ADR-0134's
+`debug = 1` was there to avoid for *this crate's* panics; that stays intact.
+
+**Build cost of the change, measured.** A cold rebuild of the dependency tree is
+**325 crates in 1040 s**, and `cargo check --workspace --all-targets` re-ran in
+**205 s**, both one-time after the profile edit. The binary shrank 85,958,144 →
+67,369,472 bytes (dependencies without debuginfo) and `target/debug` grew ~3 GB.
+Rejected alternatives: a third profile (`dist`) buys a second 325-crate unit graph and
+tens of GB — the exact trap `just check`'s comment records for profile switches — and
+`opt-level` on `[profile.dev]` would slow the one thing that is not the bottleneck.
+
+**Known hotspot, deliberately not fixed.** Arm A is the one still off the ceiling: its
+close direction medians 11–14 of the 22 available frames, at a 15.6–18.1 ms mean gap
+against a 10 ms throttle, and its individual frames peak at 24.7 ms of paint.
+The note row's preview is `wrap: word-wrap` and the row's height is read from
+`note-row.preferred-height` (OrganizerArea.slint:2594), so a width change of one pixel
+re-breaks every visible row; task rows are single-line elide with a width-independent
+height, which is why arm D is at the ceiling. Both candidate fixes have a visual price
+(freezing the list's width during the tween clips a column at the drawer's edge; a
+one-line preview loses a line of the note), so the number is on record and the design
+call is left open. ADR-0166's rule — bind an animating layout's *content* width to the
+target, not to `parent.width`, and let the outer `clip` cut at the edge — is followed
+by the sidebar itself and violated by whatever the sidebar resizes.
+
+
+
+## ADR-0169 · the leak hunt found no leak in the running app, and four per-event ones in the tree (2026-10-20)
+
+ADR-0165 closed with "expensive, not leaky, so no gate went in this round" and a
+gap: *no heap profile*. This round closes the measurement half of that gap and
+reads the tree for the retention half.
+
+**The live instance is flat.** `benchmarks/scripts/mem_attach.ps1` (new) samples a
+process that is already running, which is the only way to ask this question at all —
+the 6.7 GB process was gone before ADR-0165 could look at it. Arm: the installed
+0.1.42 (pid 98804), up since 03:44, sampled every 5 s for 1656 s.
+
+| measure | first | last | drift |
+|---|---|---|---|
+| Working Set | 180 MB | 180 MB | **0 MB** (min = max = 180 across 329 samples) |
+| Private Bytes | 147 MB | 147 MB | **0 MB** (min = max = 147) |
+| handles | 682 | 682 | 0 |
+| threads | 29 | 29 | 0 |
+| CPU | — | — | 1.5 % of one core |
+
+Not one sample left 180/147. The cadence fix (ADR-0165's `sync_prune_own_old_ids`)
+holds on the machine that had the problem, and the peer blob the live library now
+carries is **519 bytes / 3 rows** where it was 171,509 bytes / 1,076 rows.
+
+**What the 1.5 % is.** `benchmarks/scripts/thread_cpu.ps1` (new) diffs
+`TotalProcessorTime` per OS thread: one thread — the UI thread, started with the
+process — is 1.32 % of the 1.5 %, and no thread was created during the span, so
+nothing is being spawned. The same cadence probe, read as an idle arm
+(`.scratch/ctl/idle-arm.err`), says what that thread is awake for: with the note
+area mounted, frames arrive in pairs spaced **505–527 ms**; with nothing mounted,
+the first 1390 ms paint **1** frame. Every repeated timer the shell owns is 250 ms
+(the pump), 40 ms (a landing fade, only while one runs) or 30 ms (a search poll,
+only while one is in flight) — none of them is 500 ms. The one 500 ms periodicity
+in the process is Slint's text-cursor blinker: `Platform::cursor_flash_cycle()`
+defaults to 1000 ms (i-slint-core-1.18.0/platform.rs:135, the version `Cargo.lock`
+pins) and the blinker toggles
+`cursor_visible` at half that (input.rs:1975-2007), and each toggle dirties a
+property, which means a **whole-window repaint**. So: a caret blinking at rest costs
+two full renders a second, at the ADR-0168 per-frame price of 8–20 ms in this
+profile. That is the idle CPU, to within its own noise. Whether the shell *should*
+hold a focused text input at rest is a design call, not a measurement, so it is left
+open with the number attached — and the only lever Slint 1.18 offers is narrower than
+expected: `cursor_flash_cycle()` returning `Duration::ZERO` does switch the timer off
+(`input.rs:2007`, `if !cycle_duration.is_zero()`), but that value is read from
+`ctx.platform()` at binding time, so turning it off means shipping a custom `Platform`
+implementation, not setting a flag. The blinker is one per window and its timer is
+`Repeated`, so a window that once had a text input focused keeps painting at rest.
+
+**Four per-event retentions, all fixed.** None of them is gigabyte-shaped on its own;
+all four are the "only ever pushed" pattern ADR-0165 could not see because it was
+looking at a timer:
+
+| what | where | why it grew | now |
+|---|---|---|---|
+| the notice queue | `src/app/state.rs` `NoticeQueue` | seventeen database paths `push`ed straight into a `Vec<String>` that `take_db_notice` *deliberately* never drains (a test pins "say the same thing twice"); a projection that fails on every frame appends forever | the field is a type whose only way in is `push`: a repeated line is not queued twice, and the queue keeps `MAX_DB_NOTICE_LINES = 50` |
+| per-block caches | `state.rs` `forget_block_projection`, called from `delete_page` | `db_windows` holds four `Rc<VecModel>` per database block and its five sibling session maps are keyed by the same ids; block ids come from a forward-only watermark and are never reused, and only *view switches* removed entries — page deletes did not | a page delete retires its blocks' windows, view, anchor, month, per-row, form and search entries, and drops their `page_order` keys |
+| the search poll timer | `controller.rs` `poll_arm` | `Timer::start` on a running timer replaces the callback in its own slot, so minting one was never necessary: every keystroke *and every 30 ms tick of an in-flight query* leaked a fresh `&'static Timer` (~66/s while typing) that nothing can free | one `search_poll_timer` declared in `wire` with the others, re-armed |
+| the landing fade and the 速记 style retry | `controller.rs` `org_settle_timer`, `main.rs` `quick_note_retry_timer` | same shape, once per card drop / per hotkey press on the error path | one shared handle each, re-armed |
+
+**The gate.** `just leakgate` (`benchmarks/scripts/leak_gate.ps1`, new) is four arms,
+and every arm carries the control that proves it could still fail — the rule this
+project learned the hard way (a green gate that cannot go red is worse than none):
+
+- `unit` runs the two bounds as tests and asserts **`running 2 tests`** in the output,
+  because a filter that matches nothing also exits 0.
+- `ratchet` counts `Box::leak(Box::new(slint::Timer::default()))` in `controller.rs`
+  against a frozen 8, and reads the same counter over a nine-occurrence fixture — the
+  fixture must read 9, or the comparison is not live.
+- `drift` samples the Private-byte floor of the built app on a copy of this machine's
+  library and requires ≤ 5 MB of climb, then samples a balloon process that allocates
+  64 MB and holds it through the *same* code and requires ≥ 40 MB of climb. A sampler
+  that reads the balloon flat is blind, and the arm says so instead of passing.
+
+**The first full run went red on both of the new arms, and both reds were the harness.**
+Worth keeping because each one is the shape of a gate that would have passed vacuously
+had the control not existed:
+
+- `drift` got one sample. The probe launched, lost the single-instance claim to the
+  installed 0.1.42, sat on the notice that auto-dismisses after 8 s (the same 8.54 s
+  exit the 0.1.42 install notes recorded) and left — it never opened the library, so
+  there was never anything to sample. The fix is in the app, not the script:
+  `src/main.rs:612` now reads `--auto-exit` *paired with* `--db` as the harness run
+  `--quick-note` already was, so a probe that names its own library and its own
+  deadline leaves `\\.\pipe\quire-desktop-quit` alone and runs beside the user's
+  session. Only the pairing: `--auto-exit` alone still claims, because that run opens
+  the default library and a second writer on the file a live session holds is what the
+  claim exists to prevent. This is candidate fix 2 of docs/issue/14, narrowed to the
+  one combination that cannot become a second writer.
+- `control` read **-0.3 MB**. The balloon filled its 64 MB in the two seconds after it
+  was spawned, i.e. during the 8 s the arm spent waiting for the app's window, so
+  every sample of the control was already the high one and no sampler on earth could
+  have shown a rise. Moved the allocation to t = 10 s, inside the sampling window. Had
+  this arm not existed, the flat app reading above would have been a green light from a
+  blind sampler.
+
+**Re-run 2026-10-20 20:22, four arms, 0 failed:** `drift` Private floor 79.1 → 78.8 MB
+(drift -0.2 MB, 31 samples over 170 s) and `control` 0.5 → 126.9 MB (+126.4 MB, 8
+samples). The control's climb is bigger than its 64 MB array because the child's own
+runtime commits pages as it touches them; the number the arm cares about is that the
+same code that reads the app flat reads a hundred-plus MB climbing through it. The
+probe's 79 MB floor is a freshly-started window with no note area mounted, not the
+147 MB of the long-running session in the table above — the two are different shapes and
+only the *drift* is compared.
+
+**Two more candidates, read and cleared.** Every other `RefCell<HashMap<…>>` in
+`AppState` was checked for the same insert-without-retire shape:
+- `mcp_tools.rs:75` leaks one repeated 250 ms pump `Timer` — but `arm_pump` has a
+  single caller inside the startup bind (`main.rs:1563`), and turning MCP off and on
+  says 「重启 Quire 后生效」, so it is once per process, not once per event.
+- `state.rs:6923/6928` (`FormulaSource.cells` / `.programs`) never remove anything
+  either, but the struct owns a borrowed `&'a` repo and one `record`, so it dies at the
+  end of the row it was built for; the doc comment already says its size is the
+  formula's dependency count.
+`find_painted` (the only other `RefCell<Vec<…>>`) is assigned whole rather than pushed
+to, so it cannot outgrow the current hit list.
+
+**On record, not fixed.** Three things this audit found and left alone, each for a
+stated reason:
+- `quire-core`'s `History` is a `HashMap<PageId, Stacks>` capped at 100 entries *per
+  page* with no way to drop a page's stacks, so editing and deleting N pages keeps N
+  × (up to 100 change-pairs) for the session. It is the megabyte-shaped one, and fixing
+  it means a `History::forget(page)` in the core repo plus a rev bump — a different
+  door than this tree.
+- the LAN share server (`quire-core` `services/lan_server.rs:41`) spawns a thread per
+  connection with no cap and no read timeout, while the MCP and sync servers beside it
+  both cap at 8 and time out at 10 s. Opt-in feature (`--share`), and the same
+  core-repo problem.
+- `AppState` holds the 速记 window strongly and that window's handlers hold `Rc<AppState>`
+  (state.rs:364, controller.rs:7095-7185), so nothing is dropped at teardown. The main
+  window side keeps the discipline (`Weak` everywhere, `Rc::downgrade` in the flush
+  hook); the quick-note path is the exception. Process-lifetime anyway, so this is a
+  cleanliness item, not a growth item.
+
+**Still not measured, and what would measure it.** No heap profile: this machine has
+no WinDbg/WPT, and the per-event leaks are tens of bytes each, which is exactly why the
+drift arm cannot see them and the `ratchet` arm exists. The two-device real-LAN arm is
+still missing too — every number above is one machine dialling itself or a host that
+never answers.
+
+**The cheapest remaining win is a build flag, not a code change.** The exe on the
+workshop shelf is `just deploy-workshop`'s **dev** profile: `C:\workshop\quire-slint-0.1.42\`
+is 85,922,304 bytes and was archived at 03:43, while ADR-0168's
+`[profile.dev.package."*"] opt-level = 2` landed in `Cargo.toml` at 04:55. So the
+instance this report just measured as flat is the build whose drawer paints **1 frame**
+per 220 ms tween — the "before" column of the table above. `target\release\quire-slint.exe`
+(39,769,088 bytes, 5–12 ms frames) and the work tree's dev build (67,372,544, 8–20 ms)
+are both newer than what is installed. Shipping a release-profile build to the
+workshop is `just deploy-workshop-release`, and it is a decision, not a cleanup, so it
+was not taken here.

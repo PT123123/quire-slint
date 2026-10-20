@@ -65,6 +65,11 @@ pub struct LaunchArgs {
     /// (--measure-startup). Normal runs never set this: no timer, no thread,
     /// no extra frame.
     pub measure_startup: bool,
+    /// ADR-0168: count the **painted** frames of the sidebar's 220 ms drawer tween,
+    /// per area (`--frame-cadence`). Driven by
+    /// `benchmarks/scripts/frame_cadence.ps1` (`just cadence`), which pairs each
+    /// frame's gap with its paint duration; a normal run never sets this.
+    pub frame_cadence: bool,
 }
 
 fn parse_launch_args() -> LaunchArgs {
@@ -88,6 +93,7 @@ fn parse_launch_args() -> LaunchArgs {
         mcp: false,
         pull: None,
         measure_startup: false,
+        frame_cadence: false,
     };
     let mut i = 1;
     while i < argv.len() {
@@ -140,6 +146,9 @@ fn parse_launch_args() -> LaunchArgs {
             ("--quick-note", _) => {
                 a.quick_note = true;
             }
+            ("--frame-cadence", _) => {
+                a.frame_cadence = true;
+            }
             ("--open", Some(v)) => {
                 a.open = Some(std::path::PathBuf::from(v));
                 i += 1;
@@ -178,6 +187,17 @@ fn parse_launch_args() -> LaunchArgs {
 /// Keep a timer alive for the whole run (dropping a Timer cancels it).
 fn leak_timer(t: Timer) {
     std::mem::forget(t);
+}
+
+/// The one retry clock the 速记 style write owes. `Timer::start` on a running
+/// timer replaces the callback in its own slot, so a press that re-arms costs
+/// nothing — a fresh leaked `Timer` per press is a handle nobody can free, and
+/// a press is a hotkey, not a rare event.
+fn quick_note_retry_timer() -> &'static Timer {
+    thread_local! {
+        static T: &'static Timer = Box::leak(Box::new(Timer::default()));
+    }
+    T.with(|t| *t)
 }
 
 /// The "show the main window" answer, packaged for a thread that is not the
@@ -224,8 +244,7 @@ fn quick_note_keep_off_taskbar(window: &quire::QuickNoteWindow) {
         return;
     }
     let weak = window.as_weak();
-    let t = Timer::default();
-    t.start(
+    quick_note_retry_timer().start(
         slint::TimerMode::SingleShot,
         std::time::Duration::from_millis(60),
         move || {
@@ -236,7 +255,6 @@ fn quick_note_keep_off_taskbar(window: &quire::QuickNoteWindow) {
             }
         },
     );
-    leak_timer(t);
 }
 
 /// Both extended-style writes the 速记 window owes, in one call so neither can be
@@ -450,6 +468,123 @@ fn install_startup_measurement(
     }
 }
 
+#[cfg(windows)]
+/// The refresh rate Slint's winit frame throttle will read for *this* window:
+/// `TimerBasedFrameThrottle` divides 1 s by `current_monitor().refresh_rate_millihertz()`,
+/// so this line is the ceiling the cadence harness measures against — and the reason
+/// a 220 ms tween can show 22 frames here but only 13 on a 60 Hz read.
+fn cadence_display_report(window: &slint::Window) -> String {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    #[repr(C)]
+    #[derive(Default, Clone, Copy)]
+    struct Rect {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
+    #[repr(C)]
+    struct MonitorInfoEx {
+        cb: u32,
+        rc_monitor: Rect,
+        rc_work: Rect,
+        dw_flags: u32,
+        sz_device: [u16; 32],
+    }
+    #[repr(C)]
+    struct DevMode {
+        dm_device_name: [u16; 32],
+        dm_spec_version: u16,
+        dm_driver_version: u16,
+        dm_size: u16,
+        dm_driver_extra: u16,
+        dm_fields: u32,
+        dm_position_x: u32,
+        dm_position_y: u32,
+        dm_display_orientation: u32,
+        dm_display_fixed_output: u32,
+        dm_color: u16,
+        dm_duplex: u16,
+        dm_y_resolution: u16,
+        dm_tt_option: u16,
+        dm_collate: u16,
+        dm_form_name: [u16; 32],
+        dm_log_pixels: u16,
+        dm_bits_per_pel: u32,
+        dm_pels_width: u32,
+        dm_pels_height: u32,
+        dm_display_flags: u32,
+        dm_display_frequency: u32,
+        dm_icm_method: u32,
+        dm_icm_intent: u32,
+        dm_media_type: u32,
+        dm_dither_type: u32,
+        dm_reserved1: u32,
+        dm_reserved2: u32,
+        dm_panning_width: u32,
+        dm_panning_height: u32,
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        fn MonitorFromWindow(hwnd: isize, flags: u32) -> isize;
+        fn GetMonitorInfoW(hmonitor: isize, lpmi: *mut MonitorInfoEx) -> i32;
+        fn EnumDisplaySettingsExW(
+            device_name: *const u16,
+            mode: i32,
+            dev_mode: *mut DevMode,
+            flags: u32,
+        ) -> i32;
+    }
+    let handle = window.window_handle();
+    let Ok(raw) = handle.window_handle() else {
+        return "no window handle".to_string();
+    };
+    let RawWindowHandle::Win32(win32) = raw.as_ref() else {
+        return "not a Win32 HWND".to_string();
+    };
+    let hwnd = win32.hwnd.get();
+    unsafe {
+        let mon = MonitorFromWindow(hwnd, 2);
+        let mut mi = MonitorInfoEx {
+            cb: std::mem::size_of::<MonitorInfoEx>() as u32,
+            rc_monitor: Rect::default(),
+            rc_work: Rect::default(),
+            dw_flags: 0,
+            sz_device: [0u16; 32],
+        };
+        if GetMonitorInfoW(mon, &mut mi) == 0 {
+            return format!("hwnd={hwnd}: GetMonitorInfoW failed");
+        }
+        let name: String = mi
+            .sz_device
+            .iter()
+            .take_while(|c| **c != 0)
+            .map(|c| *c as u8 as char)
+            .collect();
+        let mut dm: DevMode = std::mem::zeroed();
+        dm.dm_size = std::mem::size_of::<DevMode>() as u16;
+        if EnumDisplaySettingsExW(mi.sz_device.as_ptr(), -1, &mut dm, 0) == 0 {
+            return format!("hwnd={hwnd} monitor={name}: EnumDisplaySettingsExW failed");
+        }
+        let mhz = dm.dm_display_frequency as usize * 1000;
+        let throttle = if mhz > 0 { 1_000_000 / mhz } else { 0 };
+        format!(
+            "hwnd={hwnd} monitor={name} rect={}x{} mode={}x{} @ {}Hz -> slint throttle {throttle}ms",
+            mi.rc_monitor.right - mi.rc_monitor.left,
+            mi.rc_monitor.bottom - mi.rc_monitor.top,
+            dm.dm_pels_width,
+            dm.dm_pels_height,
+            dm.dm_display_frequency
+        )
+    }
+}
+
+#[cfg(not(windows))]
+fn cadence_display_report(_window: &slint::Window) -> String {
+    "not windows".to_string()
+}
+
 fn real_main(start: std::time::Instant) -> Result<(), String> {
     // ── the single-instance claim (ADR-0136) ─────────────────────────────────
     // The very first thing a session does, before logging, the database or the
@@ -481,7 +616,19 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
     // leaves the channel alone entirely. It opens no shared library either (the
     // door is paired with `--db` on a throwaway file), which is the other half of
     // why skipping the claim is safe here and nowhere else.
-    let harness = std::env::args().skip(1).any(|a| a == "--quick-note");
+    //
+    // `--auto-exit` paired with `--db` is the same shape by the same argument: a
+    // deadline and a library the caller named. Without it the memory gate could
+    // not run on a machine with the app open — the probe lost the claim, sat on
+    // the 8-second notice, and exited before the sampler had six points
+    // (docs/issue/14). A bare `--auto-exit` is not enough: that run opens the
+    // default library, and a second writer on the file a live session holds is
+    // exactly what the claim exists to prevent.
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let has_flag = |name: &str| argv.iter().any(|a| a == name);
+    let harness = has_flag("--quick-note")
+        || has_flag("--frame-cadence")
+        || (has_flag("--auto-exit") && has_flag("--db"));
     let second = if harness {
         None
     } else {
@@ -1046,6 +1193,222 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                                     bad.join(", ")
                                 }
                             );
+                            let _ = slint::quit_event_loop();
+                        }
+                        _ => {}
+                    }
+                },
+            );
+            leak_timer(t);
+        }
+        // ADR-0168. What "帧数比较少" is worth depends on one number no still can
+        // show: how many frames the *running* app paints inside the 220 ms tween.
+        // The notifier stamps every painted frame and its own duration, and the
+        // stage beat mounts each area in turn and toggles the drawer over it, so
+        // the gap/paint pair says whether a slow frame is the renderer or the
+        // event loop. `benchmarks/scripts/frame_cadence.ps1` aligns the marks with
+        // the stage times and prints the per-arm table; it needs a real window on a
+        // real monitor, which is why this is not part of `just shot`'s headless path.
+        if launch.frame_cadence {
+            let marks: std::rc::Rc<std::cell::RefCell<Vec<f64>>> =
+                std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            let renders: std::rc::Rc<std::cell::RefCell<Vec<f64>>> =
+                std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            let clock = std::rc::Rc::new(std::cell::Cell::new(std::time::Instant::now()));
+            let m = marks.clone();
+            let r = renders.clone();
+            let c = clock.clone();
+            let before = std::rc::Rc::new(std::cell::Cell::new(-1.0f64));
+            let b2 = before.clone();
+            if ui
+                .window()
+                .set_rendering_notifier(move |s, _api| {
+                    let now = c.get().elapsed().as_secs_f64() * 1000.0;
+                    if matches!(s, slint::RenderingState::BeforeRendering) {
+                        b2.set(now);
+                    } else if matches!(s, slint::RenderingState::AfterRendering) {
+                        m.borrow_mut().push(now);
+                        let b = b2.get();
+                        if b >= 0.0 {
+                            r.borrow_mut().push(now - b);
+                        }
+                    }
+                })
+                .is_err()
+            {
+                eprintln!("cadence: no rendering notifier on this backend");
+            }
+            let w = ui.window().size();
+            eprintln!(
+                "cadence: start scale={} size={}x{} open={}",
+                ui.window().scale_factor(),
+                w.width,
+                w.height,
+                ui.global::<quire::UIState>().get_sidebar_open()
+            );
+            let _ = ui.window().show();
+            let _ = ui.window().set_minimized(false);
+            let w = ui.window().size();
+            eprintln!(
+                "cadence: shown visible={} min={} max={} size={}x{}",
+                ui.window().is_visible(),
+                ui.window().is_minimized(),
+                ui.window().is_maximized(),
+                w.width,
+                w.height
+            );
+            let t = Timer::default();
+            let ui_w = ui.as_weak();
+            let marks2 = marks.clone();
+            let clock2 = clock.clone();
+            let last_count = std::rc::Rc::new(std::cell::Cell::new(0usize));
+            let stages = std::rc::Rc::new(std::cell::Cell::new(0u32));
+            // `gap/paint` per frame: the gap is what the event loop was busy with
+            // *outside* the paint (layout, a model rebuild, a Rust job), the paint is
+            // what the renderer said about the frame itself. A long gap with a short
+            // paint is not a slow drawing — it is something else holding the thread.
+            let dump_pairs = {
+                let m = marks.clone();
+                let r = renders.clone();
+                let l = last_count.clone();
+                move || -> String {
+                    let b = m.borrow();
+                    let rb = r.borrow();
+                    let from = l.get().saturating_sub(1);
+                    l.set(b.len());
+                    if b.len() <= from {
+                        return "none".to_string();
+                    }
+                    b[from..]
+                        .windows(2)
+                        .enumerate()
+                        .map(|(i, p)| {
+                            let paint = rb.get(from + i).map_or(-1.0, |v| *v);
+                            format!("{:.1}/{:.1}", p[1] - p[0], paint)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",")
+                }
+            };
+            t.start(
+                slint::TimerMode::Repeated,
+                std::time::Duration::from_millis(900),
+                move || {
+                    let Some(ui) = ui_w.upgrade() else { return };
+                    let stage = stages.get();
+                    stages.set(stage + 1);
+                    let g = ui.global::<quire::UIState>();
+                    let now = clock2.get().elapsed().as_secs_f64() * 1000.0;
+                    match stage {
+                        0 => {
+                            let w = ui.window().size();
+                            eprintln!(
+                                "cadence: t={now:.1} stage=idle visible={} min={} size={}x{} marks={}",
+                                ui.window().is_visible(),
+                                ui.window().is_minimized(),
+                                w.width,
+                                w.height,
+                                marks2.borrow().len()
+                            );
+                            eprintln!("cadence: {}", cadence_display_report(ui.window()));
+                        }
+                        1 => {
+                            g.set_active_area("organizer".into());
+                            g.set_org_view(3);
+                            g.set_org_selected_note(-1);
+                            g.set_sidebar_open(true);
+                            eprintln!("cadence: t={now:.1} stage=A-prep organizer all rows, no body");
+                        }
+                        2 => eprintln!("cadence: t={now:.1} stage=A-swallow frames={}", dump_pairs()),
+                        3 => {
+                            eprintln!("cadence: t={now:.1} stage=A-close organizer all, no body");
+                            g.set_sidebar_open(false);
+                        }
+                        4 => eprintln!("cadence: t={now:.1} stage=A-done frames={}", dump_pairs()),
+                        5 => {
+                            eprintln!("cadence: t={now:.1} stage=A-open organizer all, no body");
+                            g.set_sidebar_open(true);
+                        }
+                        6 => eprintln!("cadence: t={now:.1} stage=A-done2 frames={}", dump_pairs()),
+                        7 => {
+                            g.set_org_selected_note(0);
+                            g.set_org_view(1);
+                            eprintln!(
+                                "cadence: t={now:.1} stage=B-prep organizer today, body on selected={}",
+                                g.get_org_selected_note()
+                            );
+                        }
+                        8 => eprintln!("cadence: t={now:.1} stage=B-swallow frames={}", dump_pairs()),
+                        9 => {
+                            eprintln!("cadence: t={now:.1} stage=B-close organizer today, body on");
+                            g.set_sidebar_open(false);
+                        }
+                        10 => eprintln!("cadence: t={now:.1} stage=B-done frames={}", dump_pairs()),
+                        11 => {
+                            eprintln!("cadence: t={now:.1} stage=B-open organizer today, body on");
+                            g.set_sidebar_open(true);
+                        }
+                        12 => eprintln!("cadence: t={now:.1} stage=B-done2 frames={}", dump_pairs()),
+                        13 => {
+                            g.set_org_view(4);
+                            g.set_org_selected_note(-1);
+                            eprintln!(
+                                "cadence: t={now:.1} stage=C-prep organizer 已完成, view={}",
+                                g.get_org_view()
+                            );
+                        }
+                        14 => {
+                            eprintln!("cadence: t={now:.1} stage=C-close organizer empty");
+                            g.set_sidebar_open(false);
+                        }
+                        15 => eprintln!("cadence: t={now:.1} stage=C-done frames={}", dump_pairs()),
+                        16 => {
+                            eprintln!("cadence: t={now:.1} stage=C-open organizer empty");
+                            g.set_sidebar_open(true);
+                        }
+                        17 => eprintln!("cadence: t={now:.1} stage=C-done2 frames={}", dump_pairs()),
+                        18 => {
+                            g.set_org_tab(1);
+                            eprintln!("cadence: t={now:.1} stage=D-prep organizer 任务 tab");
+                        }
+                        19 => {
+                            eprintln!("cadence: t={now:.1} stage=D-close organizer 任务");
+                            g.set_sidebar_open(false);
+                        }
+                        20 => eprintln!("cadence: t={now:.1} stage=D-done frames={}", dump_pairs()),
+                        21 => {
+                            eprintln!("cadence: t={now:.1} stage=D-open organizer 任务");
+                            g.set_sidebar_open(true);
+                        }
+                        22 => eprintln!("cadence: t={now:.1} stage=D-done2 frames={}", dump_pairs()),
+                        // The control the first round lacked: the same drawer tween
+                        // with the editor mounted instead of the organizer.
+                        23 => {
+                            g.set_active_area("docs".into());
+                            eprintln!("cadence: t={now:.1} stage=E-prep docs area");
+                        }
+                        24 =>
+                            eprintln!("cadence: t={now:.1} stage=E-swallow frames={}", dump_pairs()),
+                        25 => {
+                            eprintln!("cadence: t={now:.1} stage=E-close docs");
+                            g.set_sidebar_open(false);
+                        }
+                        26 => eprintln!("cadence: t={now:.1} stage=E-done frames={}", dump_pairs()),
+                        27 => {
+                            eprintln!("cadence: t={now:.1} stage=E-open docs");
+                            g.set_sidebar_open(true);
+                        }
+                        28 =>
+                            eprintln!("cadence: t={now:.1} stage=E-done2 frames={}", dump_pairs()),
+                        29 => {
+                            eprintln!("cadence: t={now:.1} done");
+                            let list: Vec<String> =
+                                marks2.borrow().iter().map(|v| format!("{v:.1}")).collect();
+                            eprintln!("cadence: marks_ms={}", list.join(","));
+                            let renders2 = renders.borrow();
+                            let rl: Vec<String> =
+                                renders2.iter().map(|v| format!("{v:.1}")).collect();
+                            eprintln!("cadence: render_ms={}", rl.join(","));
                             let _ = slint::quit_event_loop();
                         }
                         _ => {}

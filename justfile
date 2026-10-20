@@ -65,6 +65,31 @@ clips:
     cargo build --features software --bin quire-shot --target-dir target-shot
     powershell -NoProfile -ExecutionPolicy Bypass -File benchmarks\scripts\clips.ps1 -Shot target-shot\debug\quire-shot.exe -GifW 320 -Frames 14
 
+# How many frames does the sidebar's 220 ms drawer tween actually paint?
+#
+# `clips` answers "did it interpolate" from a headless capture; this answers
+# "how many frames did the real window put on the screen", which is the number
+# behind "动画不够顺畅，像是帧数比较少" (ADR-0168). It needs a real window on a
+# real monitor, so it runs the app itself with `--frame-cadence` against a copy of
+# this machine's library, runs it three times and reports the median per arm — a
+# single run on this machine spreads from 8 to 17 frames for the same arm. The worst
+# arm failing under 6 frames is the gate; 6 is deliberately *below* today's measured
+# spread, because a floor inside the noise gets ignored. A GIF of a jump and a
+# 1-frame drawer both look fine until someone counts the frames.
+cadence:
+    cargo build --bin quire-slint
+    powershell -NoProfile -ExecutionPolicy Bypass -File benchmarks\scripts\frame_cadence.ps1
+
+# the memory and leak gates (ADR-0169): the two bounds as tests, the per-event
+# Timer ratchet, and the Private-byte floor of an app on a copy of this
+# machine's library — each arm paired with the control that proves it can fail.
+# ~4 min with the drift arm; `... -SkipDrift` for the two cheap arms. The drift
+# probe runs beside a Quire that is already open (`--auto-exit` + `--db` is the
+# harness pairing, ADR-0169), so the gate is not an "app must be closed first" job.
+leakgate:
+    cargo build --bin quire-slint
+    powershell -NoProfile -ExecutionPolicy Bypass -File benchmarks\scripts\leak_gate.ps1
+
 # package the release exe into a zip (M8-lite; installer comes later)
 dist:
     cargo build --release --bin quire-slint
@@ -81,29 +106,40 @@ dist:
 # has to precede the build because build.rs stamps the exe's version block from
 # that same key.
 #
-# The build is ~2m30s, and that is one crate's codegen rather than a cold cache:
-# the bump invalidates the whole `quire` crate, and `[profile.release]`'s
-# `codegen-units = 1` + thin LTO is *both* the audited size choice and the
-# fastest setting for this repeat build (measured 2026-09-25 — PERFORMANCE.md
-# "Build cost", and ADR-0024's update).
+# **This is the default deploy, and it builds the *dev* profile** (decided
+# 2026-10-20: a workshop deploy is asked for when somebody wants a current exe to
+# run, not when the archived bytes have to be the audited size). Identical
+# ceremony to `deploy-workshop-release` — bump the patch, commit + push the bump,
+# archive to C:\workshop\quire-slint-<version>\ — and identical destination. Only
+# the build differs: `cargo build --bin quire-slint` (dev) instead of `--release`.
+# The release build's cost is `[profile.release]`'s `codegen-units = 1` + thin
+# LTO, ~198s of codegen on the single `quire` crate plus the link, a repeat
+# deploy measured at 9-11 minutes (docs/BUILD_PERFORMANCE.md). Dev asks for the
+# plain tree `just build` / `just run` already keep warm, with no `--config`
+# override (that hybrid is what `check`'s comment warns about: it rebuilds all
+# 325 dependency crates), so the bump only recompiles `quire` and an ~11s link.
+# Since ADR-0168 the dev tree's *dependencies* are built optimised
+# (`[profile.dev.package."*"]`), which is what lets this exe animate at all: at
+# opt-level 0 the drawer's 220 ms tween painted one frame. The line is in
+# Cargo.toml rather than a flag here so the tree keeps one set of fingerprints —
+# it costs a rebuild only when that line changes (once: 1040 s, docs/BUILD_PERFORMANCE.md §12).
+# The dev exe still carries the bumped FileVersion — build.rs stamps it from
+# CARGO_PKG_VERSION, profile-independent.
 deploy-workshop:
     powershell -NoProfile -ExecutionPolicy Bypass -File install\deploy-workshop.ps1
 
-# the same deploy, built in the *dev* profile instead of `--release`.
+# the same deploy, built `--release` — the audited-size exe.
 #
-# Identical ceremony to `deploy-workshop` — bump the patch, commit + push the bump,
-# archive to C:\workshop\quire-slint-<version>\ — and identical destination. Only the
-# build differs: `cargo build --bin quire-slint` (dev) instead of `--release`. The
-# release build's cost is `[profile.release]`'s `codegen-units = 1` + thin LTO, ~198s
-# of codegen on the single `quire` crate plus the link, a repeat deploy measured at
-# 9-11 minutes. Dev asks for the plain tree `just build` / `just run` already keep warm,
-# with no `--config` override (that hybrid is what `check`'s comment warns about: it
-# rebuilds all 325 dependency crates), so the bump only recompiles `quire` and an ~11s
-# link. Use this when the workshop only needs a current exe to run; use `deploy-workshop`
-# when the archived file is the audited-size release itself. The dev exe still carries
-# the bumped FileVersion — build.rs stamps it from CARGO_PKG_VERSION, profile-independent.
-deploy-workshop-fast:
-    powershell -NoProfile -ExecutionPolicy Bypass -File install\deploy-workshop-fast.ps1
+# Use this when the file on the shelf *is* the release artifact (a size audit, a
+# copy that goes out as the build of record); `deploy-workshop` above is the
+# default and costs a dev build. The build is ~2m30s at best and 9-11 min as a
+# repeat, and that is one crate's codegen rather than a cold cache: the bump
+# invalidates the whole `quire` crate, and `[profile.release]`'s
+# `codegen-units = 1` + thin LTO is *both* the audited size choice and the
+# fastest setting for this repeat build (measured 2026-09-25 — PERFORMANCE.md
+# "Build cost", and ADR-0024's update).
+deploy-workshop-release:
+    powershell -NoProfile -ExecutionPolicy Bypass -File install\deploy-workshop-release.ps1
 
 # publish a release: bump the patch, build the release exe, and attach two files
 # to a GitHub release — Quire-<version>-windows-x64-setup.exe (install\
