@@ -7024,6 +7024,33 @@ fn org_capture_sent(g: &UIState<'_>, s: &Rc<AppState>) {
         // of the page's own gate (ADR-0137): the refresh below fills the
         // panel from it, and the draft load puts the new note's words in.
         g.set_org_note_open(id as i32);
+        // The toast rides the write that succeeded and nothing else — a blank
+        // draft creates no note and must not claim one. It goes on the *main*
+        // shell's globals (the same `g` every `wire` handler writes): the 速记
+        // window is put down by this very action, and a toast inside a window
+        // that is going away is a toast nobody sees. AppShell animates it in;
+        // this clock is what puts it out, unless the user clicks first. One
+        // leaked handle for every send (`Timer::start` on a running timer
+        // replaces its slot), so a second 保存 simply moves the same deadline.
+        let toast_timer: &'static slint::Timer =
+            Box::leak(Box::new(slint::Timer::default()));
+        g.set_capture_toast_text("已发送 · 已记为笔记".into());
+        g.set_capture_toast_visible(true);
+        // `as_weak` needs the component named (`ui_state_weak`'s note): `UIState`
+        // is implemented once per root component, and a `&UIState<'_>` argument
+        // here does not say which one — though both hosts reach this body
+        // through the main window's handle.
+        let g = <UIState<'_> as Global<'_, AppWindow>>::as_weak(g);
+        toast_timer.stop();
+        toast_timer.start(
+            slint::TimerMode::SingleShot,
+            std::time::Duration::from_millis(2400),
+            move || {
+                if let Some(g) = g.upgrade() {
+                    g.set_capture_toast_visible(false);
+                }
+            },
+        );
     }
     g.set_org_capture_draft("".into());
     g.set_org_capture_caret(0);

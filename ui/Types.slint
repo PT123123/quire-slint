@@ -1694,6 +1694,14 @@ export global UIState {
     // the draft, the way the Android copy recomputes it off its catalog.
     in-out property <[string]> org-tag-suggestions;
     callback org-capture-draft-changed();
+    // The 已发送 toast (the pill AppShell draws at the bottom of the window).
+    // Rust lights it from `org_capture_sent` when a draft actually became a note
+    // and puts it out on its own one-shot clock, so the click-to-dismiss path
+    // and the timeout share one property. It lives on the main shell rather
+    // than in the 速记 window because 保存 puts that window down in the same
+    // action — a toast inside a window that is going away says nothing.
+    in-out property <bool> capture-toast-visible: false;
+    in-out property <string> capture-toast-text: "";
     // A tap on one of the tray's chips: the half-typed `#token` it names is
     // replaced by the whole tag, which is the Android copy's `applyTagSuggestion`.
     callback org-tag-suggest-picked(string);
