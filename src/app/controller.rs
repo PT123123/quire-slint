@@ -5773,6 +5773,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
             if g.get_org_capture_open() {
                 return;
             }
+            s.quick_note_success_visible(false);
             org_commit_field(&g, &s);
             org_capture_open(&g, &s);
         });
@@ -7018,6 +7019,8 @@ fn org_capture_discard(g: &UIState<'_>, state: &Rc<AppState>) {
 /// every caller adopts the small window's draft onto it first.
 fn org_capture_sent(g: &UIState<'_>, s: &Rc<AppState>) {
     let text = g.get_org_capture_draft().to_string();
+    let quick_note_host = g.get_quick_note_host();
+    let mut quick_note_toast = false;
     if let Some(id) = s.org_create_note_from_capture(text) {
         g.set_org_selected_note(id as i32);
         // "Open what you just made" is one of the few legitimate writers
@@ -7034,29 +7037,55 @@ fn org_capture_sent(g: &UIState<'_>, s: &Rc<AppState>) {
         // replaces its slot), so a second 保存 simply moves the same deadline.
         let toast_timer: &'static slint::Timer =
             Box::leak(Box::new(slint::Timer::default()));
-        g.set_capture_toast_text("已发送 · 已记为笔记".into());
-        g.set_capture_toast_visible(true);
-        // `as_weak` needs the component named (`ui_state_weak`'s note): `UIState`
-        // is implemented once per root component, and a `&UIState<'_>` argument
-        // here does not say which one — though both hosts reach this body
-        // through the main window's handle.
-        let g = <UIState<'_> as Global<'_, AppWindow>>::as_weak(g);
-        toast_timer.stop();
-        toast_timer.start(
-            slint::TimerMode::SingleShot,
-            std::time::Duration::from_millis(2400),
-            move || {
-                if let Some(g) = g.upgrade() {
-                    g.set_capture_toast_visible(false);
-                }
-            },
-        );
+        if quick_note_host {
+            quick_note_toast = true;
+            // Alt+N deliberately leaves AppWindow hidden in the tray. Put the
+            // confirmation on the visible quick-note window and let it finish
+            // its toast before putting that window down.
+            s.quick_note_success_visible(true);
+            let g = <UIState<'_> as Global<'_, AppWindow>>::as_weak(g);
+            let s = s.clone();
+            toast_timer.stop();
+            toast_timer.start(
+                slint::TimerMode::SingleShot,
+                std::time::Duration::from_millis(2400),
+                move || {
+                    s.quick_note_success_visible(false);
+                    if let Some(g) = g.upgrade() {
+                        // A fresh Alt+N press may have reopened the composer
+                        // while this toast was visible; never hide that session.
+                        if !g.get_org_capture_open() && g.get_quick_note_host() {
+                            g.set_quick_note_host(false);
+                            s.hide_quick_note();
+                        }
+                    }
+                },
+            );
+        } else {
+            g.set_capture_toast_text("已发送 · 已记为笔记".into());
+            g.set_capture_toast_visible(true);
+            // `as_weak` needs the component named (`ui_state_weak`'s note):
+            // `UIState` is implemented once per root component.
+            let g = <UIState<'_> as Global<'_, AppWindow>>::as_weak(g);
+            toast_timer.stop();
+            toast_timer.start(
+                slint::TimerMode::SingleShot,
+                std::time::Duration::from_millis(2400),
+                move || {
+                    if let Some(g) = g.upgrade() {
+                        g.set_capture_toast_visible(false);
+                    }
+                },
+            );
+        }
     }
     g.set_org_capture_draft("".into());
     g.set_org_capture_caret(0);
     g.set_org_capture_open(false);
     org_capture_publish(g, s);
-    quick_note_put_down(g, s);
+    if !quick_note_toast {
+        quick_note_put_down(g, s);
+    }
     // the draft and its tray are one thing: an empty draft has no token
     org_tag_suggest(g, s);
     org_refresh(g, s);

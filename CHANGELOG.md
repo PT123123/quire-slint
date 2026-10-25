@@ -2,12 +2,10 @@
 
 ## 构建 (unreleased)
 
-### 速记保存后现在有一句「已发送」：底部居中的 toast，两个宿主共用同一条写路径
+### Alt+N 保存成功后在速记窗里显示 toast
 
-- **做什么。** ➤ 的保存（＋的笔记页 overlay 和 Alt+N 的速记小窗）以前除了窗口收起什么都不说；现在每次真正写出笔记的保存在主界面底部居中亮一枚 toast 2.4 s，✕ 或点胶囊任意处提前收。空草稿被 `org_create_note_from_capture` 拒掉时不点亮——没有笔记就没有「已发送」
-- **为什么在主 shell 画。** 速记窗在保存的同一个动作里被 `quick_note_put_down` 放下，一个正在消失的窗口里的 toast 是没人能看见的 toast。所以 `UIState.capture-toast-visible` / `-text`（Types.slint）落在主窗 globals，`org_capture_sent` 写它——两个宿主都经由这一个函数，这条线本来就已经钉死
-- **样式与动效。** 250×44 胶囊：accent 实心圆徽里嵌 `todo-check`（`text-on-accent`，全套 accent 控制件的对比配方），底是 `surface-overlay → accent-soft` 的渐变、1 px accent 描边。滑入+淡入 260 ms，收回去是纯淡出（`y` 不动画）——到场有声张，退场安静。不新增颜色令牌，全套沿用主题自己的 accent
-- **时钟。** Rust 端一个 leaked `slint::Timer`（本档案定时器的既有写法）单次 2400 ms 到点灭。`start` 前显式 `stop`：连按两次保存时，第一次的回调会落在第二次点亮**之后**把它抹掉——「运行中的 start 就是原地换回调」在这里救不了，上弦必须先洗
+- Alt+N 可以在主窗口隐藏到托盘时使用。保存成功时，提示现在显示在可见的速记窗里约 2.4 秒，再自动收起；笔记页的 ＋ 仍在主窗口显示 toast。
+- 空草稿没有写出笔记，因此不会显示成功提示。若提示期间再次打开 Alt+N，新一轮编辑不会被旧提示的计时器收起。
 
 ### 装了 27 分钟的那实例一个字节没涨；树里到找到四条「只 push」的，修完了还上门（`just leakgate`，四臂）
 

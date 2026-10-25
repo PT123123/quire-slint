@@ -1674,6 +1674,20 @@ impl AppState {
         }
     }
 
+    /// Show or clear the Alt+N window's short successful-send confirmation.
+    pub fn quick_note_success_visible(&self, visible: bool) {
+        use slint::ComponentHandle;
+        if let Some(window) = self.quick_note.borrow().as_ref() {
+            window.set_success_visible(visible);
+            let scale = window.window().scale_factor();
+            let (width, height) = if visible { (320.0, 80.0) } else { (560.0, 340.0) };
+            let _ = window.window().set_size(slint::PhysicalSize::new(
+                (width * scale) as u32,
+                (height * scale) as u32,
+            ));
+        }
+    }
+
     /// Push the authoritative capture draft into the 速记 window (ADR-0145).
     ///
     /// Why this exists at all: a Slint `global` lives in the item tree's

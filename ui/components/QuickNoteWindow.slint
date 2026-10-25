@@ -34,10 +34,10 @@ import { NoteCaptureCard } from "./NoteCaptureCard.slint";
 
 export component QuickNoteWindow inherits Window {
     title: "Quire 速记";
-    preferred-width: 560px;
-    preferred-height: 340px;
-    min-width: 360px;
-    min-height: 220px;
+    preferred-width: root.success-visible ? 320px : 560px;
+    preferred-height: root.success-visible ? 80px : 340px;
+    min-width: root.success-visible ? 320px : 360px;
+    min-height: root.success-visible ? 80px : 220px;
     // The point of the hotkey: the note is written over the work, not under it.
     always-on-top: true;
     no-frame: true;
@@ -72,6 +72,7 @@ export component QuickNoteWindow inherits Window {
     in-out property <string> draft: "";
     in property <int> caret: 0;
     in property <[string]> suggestions: [];
+    in-out property <bool> success-visible: false;
 
     // The four verdicts, straight to Rust. This is what this window's own copy
     // of the callbacks used to get wrong: the card fired a tracker that had no
@@ -82,6 +83,7 @@ export component QuickNoteWindow inherits Window {
     callback suggestion-picked(string);
 
     card := NoteCaptureCard {
+        visible: !root.success-visible;
         // Square corners: the card *is* this window's client area, and Windows
         // paints what a rounded corner would have shown through as whatever was
         // behind it — for a frameless window that is the window's own surface.
@@ -108,5 +110,49 @@ export component QuickNoteWindow inherits Window {
         dismissed => { root.dismissed(); }
         draft-edited => { root.draft-edited(); }
         suggestion-picked(tag) => { root.suggestion-picked(tag); }
+    }
+
+    // Alt+N can be used while the main window is in the tray. In that case the
+    // AppShell toast has no visible host, so keep this small window up long
+    // enough to show the same successful-send confirmation here.
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - 24px;
+        width: 250px;
+        height: 44px;
+        visible: root.success-visible;
+        border-radius: 22px;
+        border-width: 1px;
+        border-color: Colors.accent.with-alpha(0.38);
+        background: @linear-gradient(175deg, Colors.p.bg, Colors.accent-soft);
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 12px;
+            spacing: 10px;
+            Rectangle {
+                vertical-stretch: 0;
+                cross-axis-self-alignment: center;
+                width: 24px;
+                height: 24px;
+                border-radius: 12px;
+                background: Colors.accent;
+                Text {
+                    x: 4px;
+                    y: 1px;
+                    text: "✓";
+                    color: Colors.text-on-accent;
+                    font-size: 17px;
+                }
+            }
+            Text {
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+                text: "已发送 · 已记为笔记";
+                font-family: Typography.ui-font;
+                font-size: Typography.size-ui;
+                font-weight: Typography.weight-medium;
+                color: Colors.text-primary;
+            }
+        }
     }
 }
