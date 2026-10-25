@@ -7,7 +7,6 @@ import { Theme } from "../Theme.slint";
 import { Colors } from "../Colors.slint";
 import { Typography } from "../Typography.slint";
 import { IconButton } from "./IconButton.slint";
-import { Icon } from "../Icons.slint";
 import { Sidebar } from "./Sidebar.slint";
 import { Editor } from "./Editor.slint";
 import { OrganizerArea } from "./OrganizerArea.slint";
@@ -145,10 +144,8 @@ export component AppShell inherits Rectangle {
     // clicked to leave would be a second chore. Rust arms the hide clock; the
     // click only gets there first.
     //
-    // Success is painted rather than shouted: the theme's own accent carries the
-    // badge and the border, over a soft ramp from `surface-overlay` down to
-    // `accent-soft` (a hair of hue in an otherwise grey pill is what makes it
-    // look deliberate rather than leftover). Slide-and-fade in, plain fade out —
+    // Success is text only, on a quiet pill using the theme's own accent border
+    // and soft surface ramp. Slide-and-fade in, plain fade out —
     // the reverse animation is slowed, so leaving is quieter than arriving.
     Rectangle {
         x: (parent.width - self.width) / 2;
@@ -170,43 +167,17 @@ export component AppShell inherits Rectangle {
         animate y { duration: 200ms; }
         HorizontalLayout {
             padding-left: Theme.spacing-md;
-            padding-right: Theme.spacing-sm;
-            spacing: Theme.spacing-sm;
-            // The ✓ plate: an accent disc with the icon cut in `text-on-accent`,
-            // the same contrast pair every filled accent control in the app uses.
-            Rectangle {
-                vertical-stretch: 0;
-                cross-axis-self-alignment: center;
-                width: 24px;
-                height: 24px;
-                border-radius: 12px;
-                background: Colors.accent;
-                Icon {
-                    x: 4px;
-                    y: 4px;
-                    name: "todo-check";
-                    size: 16px;
-                    color: Colors.text-on-accent;
-                }
-            }
+            padding-right: Theme.spacing-md;
             Text {
                 horizontal-stretch: 1;
                 vertical-alignment: center;
+                horizontal-alignment: center;
                 text: UIState.capture-toast-text;
                 font-family: Typography.ui-font;
                 font-size: Typography.size-ui;
                 font-weight: Typography.weight-medium;
                 color: Colors.text-primary;
                 overflow: elide;
-            }
-            IconButton {
-                vertical-stretch: 0;
-                cross-axis-self-alignment: center;
-                icon-name: "x";
-                size: 24px;
-                clicked => {
-                    UIState.capture-toast-visible = false;
-                }
             }
         }
         // A click anywhere on the pill dismisses it — the toast confirms, it does

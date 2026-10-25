@@ -127,26 +127,11 @@ export component QuickNoteWindow inherits Window {
         background: @linear-gradient(175deg, Colors.p.bg, Colors.accent-soft);
         HorizontalLayout {
             padding-left: 16px;
-            padding-right: 12px;
-            spacing: 10px;
-            Rectangle {
-                vertical-stretch: 0;
-                cross-axis-self-alignment: center;
-                width: 24px;
-                height: 24px;
-                border-radius: 12px;
-                background: Colors.accent;
-                Text {
-                    x: 4px;
-                    y: 1px;
-                    text: "✓";
-                    color: Colors.text-on-accent;
-                    font-size: 17px;
-                }
-            }
+            padding-right: 16px;
             Text {
                 horizontal-stretch: 1;
                 vertical-alignment: center;
+                horizontal-alignment: center;
                 text: "已发送 · 已记为笔记";
                 font-family: Typography.ui-font;
                 font-size: Typography.size-ui;
