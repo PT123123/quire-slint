@@ -2,7 +2,7 @@
 # One member again: the model and the store left for their own repository
 # (ADR-0094) and come back as the pinned git dependency below, so the only crate
 # built from this directory is the Slint shell.
-members = ["."]
+members = [".", "quire-platform"]
 
 [workspace.dependencies]
 # gif is listed because `attachment_store` names a GIF row `gif` / `image/gif`.
@@ -78,6 +78,11 @@ slint = { version = "1.18", default-features = false, features = [
 # Only for that one HWND: `RawWindowHandle::Win32` behind `Window::window_handle()`.
 # The same 0.6 slint itself builds against, so no second copy lands in the binary.
 raw-window-handle = "0.6"
+# The Windows platform adapters, split into their own crate (L3, BUILD_PERFORMANCE.md §5):
+# editing a Windows adapter recompiles only `quire-platform`, not the Slint-generated
+# UI code that lives in `quire`. Re-exported below as `crate::platform` so every
+# existing `crate::platform::…` call site stays untouched.
+quire-platform = { path = "quire-platform" }
 
 [features]
 default = ["femtovg"]

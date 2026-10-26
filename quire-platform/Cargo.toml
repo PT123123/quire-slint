@@ -1,0 +1,21 @@
+[package]
+name = "quire-platform"
+version = "0.1.0"
+edition = "2021"
+description = "Windows platform adapters for the Quire shell — clipboard, tray, hotkeys, monitors, quit pipe (M8). Kept as its own crate so editing a Windows adapter does not recompile the Slint-generated UI code in `quire`."
+
+# `slint` is here only for the `slint::Window` type that the HWND helpers take
+# as a parameter (ADR-0145 / ADR-0153). The full renderer feature set is pulled
+# in by `quire` and unified across the workspace, so this crate never builds a
+# second copy of Slint — it just needs `std` plus the `raw-window-handle-06`
+# feature that powers `Window::window_handle()`.
+[dependencies]
+slint = { version = "1.18", default-features = false, features = [
+    "std",
+    "raw-window-handle-06",
+] }
+# The same 0.6 Slint itself builds against, so no second copy lands in the binary.
+raw-window-handle = "0.6"
+# PNG encode/decode for clipboard image round-trips (dib.rs). Shared with
+# `quire` through the workspace definition so both agree on the feature set.
+image = { workspace = true }

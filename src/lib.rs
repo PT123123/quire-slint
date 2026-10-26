@@ -12,7 +12,12 @@
 
 pub mod app;
 pub mod mcp;
-pub mod platform;
+// `platform` is now the `quire-platform` crate (L3 split, BUILD_PERFORMANCE.md §5).
+// Call sites reference `quire_platform::…` directly rather than re-exporting the
+// whole crate: a re-export embeds `quire-platform`'s full rmeta into this crate
+// and forces `quire` to recompile whenever a Windows adapter is edited. Direct
+// use keeps the two crates decoupled so editing platform code does not recompile
+// the Slint-generated UI here.
 
 
 pub use quire_core::{core, services, storage, testing};

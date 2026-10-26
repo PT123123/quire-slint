@@ -10,8 +10,8 @@
 
 use quire::app::controller;
 use quire::app::state::{AppState, HandleArgs};
-use quire::platform;
-use quire::platform::monitors::Rect as WindowGeometry;
+use quire_platform;
+use quire_platform::monitors::Rect as WindowGeometry;
 use quire::services::logging;
 use quire::AppWindow;
 use slint::{ComponentHandle, Timer};
@@ -215,7 +215,7 @@ fn show_window_closure(ui: &AppWindow) -> Box<dyn Fn() + Send> {
             if let Some(ui) = ui_w.upgrade() {
                 ui.window().set_minimized(false);
                 let _ = ui.show();
-                let _ = quire::platform::activate_window(ui.window());
+                let _ = quire_platform::activate_window(ui.window());
             }
         });
     })
@@ -284,8 +284,8 @@ fn quick_note_keep_off_taskbar(window: &quire::QuickNoteWindow) {
 /// but still wearing the ring is a `warn` rather than a retry loop — the second
 /// pass would read the same style and reach the same state.
 fn apply_quick_note_window_style(window: &quire::QuickNoteWindow) -> Result<(), String> {
-    let taskbar = platform::hide_from_taskbar(window.window());
-    let edge = platform::clear_window_edge(window.window());
+    let taskbar = quire_platform::hide_from_taskbar(window.window());
+    let edge = quire_platform::clear_window_edge(window.window());
     taskbar?;
     if let Err(e) = edge {
         logging::warn(&format!("速记 window edge: {e}"));
@@ -310,7 +310,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // and the exit code is the answer a deploy reads: 0 only if an instance
     // accepted, non-zero if nothing was listening (ADR-0105).
     if std::env::args().skip(1).any(|a| a == "--quit") {
-        return match quire::platform::quit::request_quit() {
+        return match quire_platform::quit::request_quit() {
             Ok(()) => {
                 println!("quire: the running instance accepted the quit request");
                 Ok(())
@@ -330,8 +330,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().skip(1).any(|a| a == "--restart") {
         let carry: Vec<String> =
             std::env::args().skip(1).filter(|a| a != "--restart").collect();
-        if quire::platform::quit::request_quit().is_ok() {
-            quire::platform::quit::wait_for_session_end();
+        if quire_platform::quit::request_quit().is_ok() {
+            quire_platform::quit::wait_for_session_end();
         }
         let exe = std::env::current_exe()?;
         std::process::Command::new(exe)
@@ -632,7 +632,7 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
     let second = if harness {
         None
     } else {
-        quire::platform::quit::claim(
+        quire_platform::quit::claim(
         env!("CARGO_PKG_VERSION"),
         {
             let quitting = quitting.clone();
@@ -655,8 +655,8 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
             // toast because there is no window yet to hang a toast off, and
             // because this is the one launch that ends in a dialog.
             let (title, body) = match verdict {
-                quire::platform::quit::SecondLaunch::Primary => return,
-                quire::platform::quit::SecondLaunch::AlreadyRunning { version } => {
+                quire_platform::quit::SecondLaunch::Primary => return,
+                quire_platform::quit::SecondLaunch::AlreadyRunning { version } => {
                     // `unknown` is this build's own word for a peer it could not
                     // read a version from — a reason for the log, not a thing to
                     // put in a sentence shown to a user.
@@ -670,13 +670,13 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                         format!("{running} 已经在运行，本次启动已退出。\n\n可在任务栏托盘图标上右键选择「显示主界面」。如果本次是打开 Markdown 文件启动，文件没有转交给现有窗口；请先退出 Quire，再重新打开该文件。"),
                     )
                 }
-                quire::platform::quit::SecondLaunch::RunningIsNewer { version } => (
+                quire_platform::quit::SecondLaunch::RunningIsNewer { version } => (
                     "已有更新版本在运行",
                     format!(
                         "Quire {version} 正在运行，它比本次启动的版本更新，本次启动已退出。"
                     ),
                 ),
-                quire::platform::quit::SecondLaunch::Replacing {
+                quire_platform::quit::SecondLaunch::Replacing {
                     quit_accepted,
                     session_ended,
                     replaced,
@@ -714,7 +714,7 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                     }
                 }
             };
-            quire::platform::notify(title, &body);
+            quire_platform::notify(title, &body);
         },
     )
     };
@@ -787,7 +787,7 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                     "资料库无法打开，Quire 未启动，也不会接受无法保存的编辑。\n\n{e}"
                 );
                 eprintln!("quire: database unavailable: {e}");
-                platform::notify("资料库无法打开", &message);
+                quire_platform::notify("资料库无法打开", &message);
                 return Err(message);
             }
         }
@@ -838,7 +838,7 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
     // size before the position, because `set_position` is what asks winit to
     // clamp against a window that already has its final size.
     if let Some(g) = state.window_geometry_setting() {
-        let placed = platform::monitors::place(g, &platform::monitors::work_areas());
+        let placed = quire_platform::monitors::place(g, &quire_platform::monitors::work_areas());
         ui.window().set_size(slint::PhysicalSize::new(
             placed.width() as u32,
             placed.height() as u32,
@@ -855,7 +855,7 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
     // The system tray (SPEC §二十七, ADR-0096): closing the window hides it, and
     // the session ends only through the tray menu's 「退出」.
     //
-    // Windows carries the *native* tray (`platform::tray`): the icon's left
+    // Windows carries the *native* tray (`quire_platform::tray`): the icon's left
     // click shows the main window, and the right-click menu is drawn dark when
     // the app's theme is — two things Slint's own tray cannot do here (it
     // reports no click, and the shell paints its menu light). The native icon
@@ -874,7 +874,7 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                 let _ = slint::quit_event_loop();
             });
         });
-        match quire::platform::tray::install(on_show, on_quit) {
+        match quire_platform::tray::install(on_show, on_quit) {
             Ok(tray) => Some(tray),
             Err(e) => {
                 eprintln!("quire: no native tray ({e})");
@@ -968,7 +968,7 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                     quick_note_keep_off_taskbar(&quick);
                     if !placed.swap(true, std::sync::atomic::Ordering::SeqCst) {
                         let size = quick.window().size();
-                        if let Some(rect) = platform::monitors::centered_on_cursor((
+                        if let Some(rect) = quire_platform::monitors::centered_on_cursor((
                             size.width as f64,
                             size.height as f64,
                         )) {
@@ -1064,10 +1064,10 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                                 // draft below is the one that keystroke produced.
                                 _ => ("typed", true, true),
                             };
-                            let ex = platform::window_ex_style(quick.window());
+                            let ex = quire_platform::window_ex_style(quick.window());
                             let note_visible = quick.window().is_visible();
                             let toolwindow = ex
-                                .map(|bits| bits & platform::WS_EX_TOOLWINDOW != 0)
+                                .map(|bits| bits & quire_platform::WS_EX_TOOLWINDOW != 0)
                                 .unwrap_or(false);
                             // `WS_EX_WINDOWEDGE` is the style bit that *used to*
                             // describe the pale ring, and it is printed because it
@@ -1077,16 +1077,16 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
                             // that clearing this bit leaves it set
                             // (`style=0x40198 want=0x40098 after=0x40198`). What
                             // the check asks is DWM itself, through
-                            // `platform::dwm_border_suppressed`.
+                            // `quire_platform::dwm_border_suppressed`.
                             let window_edge = ex
-                                .map(|bits| bits & platform::WS_EX_WINDOWEDGE != 0)
+                                .map(|bits| bits & quire_platform::WS_EX_WINDOWEDGE != 0)
                                 .unwrap_or(false);
                             // `None` — an older Windows, or a window whose HWND is
                             // not up yet — is 「cannot tell」, and is *not*
                             // counted as a failure: the question does not apply
                             // there, and a gate that fails on a platform it
                             // cannot ask is a gate nobody trusts.
-                            let dwm_border = platform::dwm_border_suppressed(quick.window());
+                            let dwm_border = quire_platform::dwm_border_suppressed(quick.window());
                             let border_gone = dwm_border != Some(false);
                             // The tri-state is printed because the rule cannot be
                             // stricter than `!= Some(false)` on a build that will
@@ -1418,14 +1418,14 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
             leak_timer(t);
         }
         let on_alt_m: Box<dyn Fn() + Send> = show_window_closure(&ui);
-        match quire::platform::hotkeys::install(on_alt_n, on_alt_m) {
+        match quire_platform::hotkeys::install(on_alt_n, on_alt_m) {
             Ok(hotkeys) => {
                 let alt_n_on = state.setting_flag_or("hotkeys.alt-n", true);
                 let alt_m_on = state.setting_flag_or("hotkeys.alt-m", false);
-                if let Err(e) = hotkeys.set_enabled(quire::platform::hotkeys::ALT_N, alt_n_on) {
+                if let Err(e) = hotkeys.set_enabled(quire_platform::hotkeys::ALT_N, alt_n_on) {
                     eprintln!("quire: Alt+N unavailable: {e}");
                 }
-                if let Err(e) = hotkeys.set_enabled(quire::platform::hotkeys::ALT_M, alt_m_on) {
+                if let Err(e) = hotkeys.set_enabled(quire_platform::hotkeys::ALT_M, alt_m_on) {
                     eprintln!("quire: Alt+M unavailable: {e}");
                 }
                 state.install_hotkeys(hotkeys);

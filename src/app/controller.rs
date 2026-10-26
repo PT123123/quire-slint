@@ -11,7 +11,7 @@ use crate::app::state::{
 };
 use crate::core::database::PropertyKind;
 use crate::core::{BlockId, Change, Command, Lang};
-use crate::platform::monitors::Rect;
+use quire_platform::monitors::Rect;
 use crate::{AppWindow, UIState};
 use slint::{ComponentHandle, Global, LogicalSize, Model, Timer};
 use std::rc::Rc;
@@ -204,7 +204,7 @@ fn apply_zoom(ui: &AppWindow, state: &Rc<AppState>, initial: bool) {
 fn window_work_area(window: &slint::Window) -> Option<Rect> {
     let pos = window.position();
     let (x, y) = (pos.x as f64, pos.y as f64);
-    crate::platform::monitors::work_areas()
+    quire_platform::monitors::work_areas()
         .into_iter()
         .find(|a| x >= a.left && x < a.right && y >= a.top && y < a.bottom)
 }
@@ -217,7 +217,7 @@ fn window_work_area(window: &slint::Window) -> Option<Rect> {
 /// than the desk, with the window controls the first thing off-screen.
 fn zoom_avail_area(window: &slint::Window) -> Option<Rect> {
     window_work_area(window)
-        .or_else(|| crate::platform::monitors::work_areas().into_iter().next())
+        .or_else(|| quire_platform::monitors::work_areas().into_iter().next())
 }
 
 // ─── LAN sync (crate::sync) ─────────────────────────────────────────────────
@@ -1729,7 +1729,7 @@ pub fn bind(ui: &AppWindow, state: &Rc<AppState>) {
     g.set_hotkey_alt_n(state.setting_flag_or("hotkeys.alt-n", true));
     g.set_hotkey_alt_m(state.setting_flag_or("hotkeys.alt-m", false));
     // The tray menu follows the app's theme, re-read every time it opens.
-    crate::platform::tray::set_theme_mode(crate::platform::tray::theme_mode_of(
+    quire_platform::tray::set_theme_mode(quire_platform::tray::theme_mode_of(
         &state.theme_setting(),
     ));
     // settings storage row (M8): the database folder, hidden for a
@@ -1915,7 +1915,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
             s.set_theme(id.as_str());
             // the tray's right-click menu re-themes itself off this hint each
             // time it opens, so a theme switch needs no restart to reach it
-            crate::platform::tray::set_theme_mode(crate::platform::tray::theme_mode_of(id.as_str()));
+            quire_platform::tray::set_theme_mode(quire_platform::tray::theme_mode_of(id.as_str()));
         });
     }
 
@@ -2281,13 +2281,13 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
                     crate::app::state::MENU_ORG_NOTE_COPY => {
                         let text = s.org_note_copy_text(&[id as i64]);
                         if !text.is_empty() {
-                            crate::platform::copy_to_clipboard(&text);
+                            quire_platform::copy_to_clipboard(&text);
                         }
                     }
                     crate::app::state::MENU_ORG_NOTE_COPY_ID => {
                         let text = s.org_note_uid(id as i64);
                         if !text.is_empty() {
-                            crate::platform::copy_to_clipboard(&text);
+                            quire_platform::copy_to_clipboard(&text);
                         }
                     }
                     // 转为待办 and 删除 both hide the row behind the bar and write
@@ -2446,7 +2446,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
                 }
                 crate::app::state::MENU_SIDE_OPEN_FOLDER => {
                     if let Some(dir) = s.data_dir() {
-                        crate::platform::open_folder(&dir);
+                        quire_platform::open_folder(&dir);
                     }
                 }
                 crate::app::state::MENU_SIDE_SETTINGS => {
@@ -3328,13 +3328,13 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
                 return false;
             }
             flush_pending_edit(&g, &s);
-            let clip = crate::platform::read_clipboard();
+            let clip = quire_platform::read_clipboard();
             let Some(text) = clip else {
                 // No text on the clipboard at all, so the other thing worth
                 // pasting gets its turn: a screenshot. When a copy carries
                 // both, the words win — a rich app's text must not be turned
                 // into a picture of itself.
-                return match crate::platform::read_clipboard_image() {
+                return match quire_platform::read_clipboard_image() {
                     None => false,
                     Some(png) => {
                         if s.paste_image(id, &png) {
@@ -3433,7 +3433,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
         let s = state.clone();
         ui.global::<UIState>().on_open_data_folder(move || {
             if let Some(dir) = s.data_dir() {
-                crate::platform::open_folder(&dir);
+                quire_platform::open_folder(&dir);
             }
         });
     }
@@ -5206,7 +5206,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
                 return;
             }
             if action == 9 {
-                crate::platform::copy_to_clipboard(&s.block_link(id));
+                quire_platform::copy_to_clipboard(&s.block_link(id));
                 return;
             }
             if (AppState::MOVE_TO_BASE..AppState::COLOR_TEXT_BASE).contains(&action) {
@@ -5675,7 +5675,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
         let gw = ui.as_weak();
         ui.global::<UIState>().on_mcp_copy(move |text| {
             let Some(g) = gw.upgrade() else { return };
-            if crate::platform::copy_to_clipboard(&text) {
+            if quire_platform::copy_to_clipboard(&text) {
                 g.global::<UIState>()
                     .set_db_notice("已复制到剪贴板，直接粘贴即可。".into());
             } else {
@@ -5740,7 +5740,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
             // switch flips, and a shortcut another application owns reads as
             // the log's own line rather than a silent dead switch
             if let Some(hotkeys) = s.hotkeys.borrow().as_ref() {
-                if let Err(e) = hotkeys.set_enabled(crate::platform::hotkeys::ALT_N, on) {
+                if let Err(e) = hotkeys.set_enabled(quire_platform::hotkeys::ALT_N, on) {
                     crate::services::logging::warn(&format!("Alt+N: {e}"));
                 }
             }
@@ -5751,7 +5751,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
         ui.global::<UIState>().on_hotkey_alt_m_toggled(move |on| {
             s.record_setting("hotkeys.alt-m", if on { "1" } else { "0" });
             if let Some(hotkeys) = s.hotkeys.borrow().as_ref() {
-                if let Err(e) = hotkeys.set_enabled(crate::platform::hotkeys::ALT_M, on) {
+                if let Err(e) = hotkeys.set_enabled(quire_platform::hotkeys::ALT_M, on) {
                     crate::services::logging::warn(&format!("Alt+M: {e}"));
                 }
             }
@@ -6660,7 +6660,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
             } else {
                 NOTE_COMMAND_EXAMPLE
             };
-            crate::platform::copy_to_clipboard(example);
+            quire_platform::copy_to_clipboard(example);
             g.set_db_notice("示例已复制到剪贴板".into());
         });
     }
@@ -6825,7 +6825,7 @@ pub fn wire(ui: &AppWindow, state: &Rc<AppState>) {
                 g.set_db_notice("没有可复制的笔记。".into());
             } else {
                 let count = text.matches("\nID: ").count();
-                crate::platform::copy_to_clipboard(&text);
+                quire_platform::copy_to_clipboard(&text);
                 g.set_db_notice(format!("已复制 {count} 条笔记（含唯一 ID）。").into());
             }
         });
@@ -7062,7 +7062,7 @@ fn org_capture_sent(g: &UIState<'_>, s: &Rc<AppState>) {
                 },
             );
         } else {
-            g.set_capture_toast_text("已发送 · 已记为笔记".into());
+            g.set_capture_toast_text("已记录为笔记".into());
             g.set_capture_toast_visible(true);
             // `as_weak` needs the component named (`ui_state_weak`'s note):
             // `UIState` is implemented once per root component.
@@ -7496,7 +7496,7 @@ fn org_selection_verb(
                 state.org_note_copy_text(&ids)
             };
             if !text.is_empty() {
-                crate::platform::copy_to_clipboard(&text);
+                quire_platform::copy_to_clipboard(&text);
             }
             // The verb already tore the mode down (`org_stop_selecting`), but
             // the *picked fill lives in the row models*, and only a refresh
@@ -8508,7 +8508,7 @@ fn attachment_action(g: &UIState<'_>, s: &Rc<AppState>, id: i32, save: bool) {
         g.set_db_notice(format!("{label}：存储的文件已不存在。").into());
         return;
     }
-    if !crate::platform::open_with_default(&path) {
+    if !quire_platform::open_with_default(&path) {
         g.set_db_notice(format!("没有程序可以打开 {label}。").into());
     }
 }
@@ -8541,7 +8541,7 @@ fn copy_current_page_markdown(g: &UIState<'_>, s: &Rc<AppState>) {
     };
     let notice = if md.trim().is_empty() {
         "此页面还没有可复制的内容。".to_string()
-    } else if crate::platform::copy_to_clipboard(&md) {
+    } else if quire_platform::copy_to_clipboard(&md) {
         "已复制页面为 Markdown。".to_string()
     } else {
         "无法访问剪贴板。".to_string()
@@ -8709,7 +8709,7 @@ fn open_html_in_browser(g: &UIState<'_>) {
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.display().to_string());
-    let notice = if crate::platform::open_with_default(&path) {
+    let notice = if quire_platform::open_with_default(&path) {
         format!("已在浏览器中打开 {name}。")
     } else {
         format!("无法在浏览器中打开 {name}。")

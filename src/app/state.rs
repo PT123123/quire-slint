@@ -40,7 +40,7 @@ use crate::services::search_service::SearchService;
 use crate::storage::search_index::SearchRequest;
 use crate::storage::SqliteRepository;
 use crate::storage::versions;
-use crate::platform::monitors::Rect as WindowGeometry;use crate::{BacklinkRow, BlockRow, BoardCard, BoardColumn, ColumnBox, ColumnItem, CommandRow, DbCell, DbColumn, DbOption, DbRow, DbViewTab, DiffRow, MenuRow, NoteDetails, NoteRow, SearchRow, SidebarNode, SlashRow, SubtaskRow, TableCell, TagRow, TaskListRow, TaskRow, TextRun, TocEntry, VersionRow};
+use quire_platform::monitors::Rect as WindowGeometry;use crate::{BacklinkRow, BlockRow, BoardCard, BoardColumn, ColumnBox, ColumnItem, CommandRow, DbCell, DbColumn, DbOption, DbRow, DbViewTab, DiffRow, MenuRow, NoteDetails, NoteRow, SearchRow, SidebarNode, SlashRow, SubtaskRow, TableCell, TagRow, TaskListRow, TaskRow, TextRun, TocEntry, VersionRow};
 use slint::{Model, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -355,7 +355,7 @@ pub struct AppState {
     /// The global hotkeys' registration handle, installed after wiring (main)
     /// and driven by the settings toggles (`wire`). `None` on a session where
     /// the thread refused — the toggles then only persist the choice.
-    pub(crate) hotkeys: RefCell<Option<crate::platform::hotkeys::Hotkeys>>,
+    pub(crate) hotkeys: RefCell<Option<quire_platform::hotkeys::Hotkeys>>,
     /// Alt+N's 速记 window (ADR-0145), installed by `main` before the hotkey is
     /// wired, because a top-level `Window` is shown from Rust and the hotkey
     /// thread may only hold a `Weak`. This is the strong half: it keeps the card
@@ -1648,7 +1648,7 @@ impl AppState {
     /// Hand the installed hotkey handle to the state, so the settings' toggles
     /// (which run in `wire`) can drive the registrations without `main`
     /// reaching into the struct across the crate line.
-    pub fn install_hotkeys(&self, hotkeys: crate::platform::hotkeys::Hotkeys) {
+    pub fn install_hotkeys(&self, hotkeys: quire_platform::hotkeys::Hotkeys) {
         *self.hotkeys.borrow_mut() = Some(hotkeys);
     }
 
