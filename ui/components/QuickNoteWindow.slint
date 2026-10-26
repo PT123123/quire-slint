@@ -30,6 +30,7 @@
 
 import { Colors } from "../Colors.slint";
 import { Typography } from "../Typography.slint";
+import { Icon } from "../Icons.slint";
 import { NoteCaptureCard } from "./NoteCaptureCard.slint";
 
 export component QuickNoteWindow inherits Window {
@@ -117,26 +118,48 @@ export component QuickNoteWindow inherits Window {
     // enough to show the same successful-send confirmation here.
     Rectangle {
         x: (parent.width - self.width) / 2;
-        y: parent.height - self.height - 24px;
-        width: 250px;
-        height: 44px;
+        y: (parent.height - self.height) / 2
+            + (root.success-visible ? 0px : 12px);
+        width: 208px;
+        height: 48px;
         visible: root.success-visible;
-        border-radius: 22px;
+        border-radius: 24px;
         border-width: 1px;
-        border-color: Colors.accent.with-alpha(0.38);
-        background: @linear-gradient(175deg, Colors.p.bg, Colors.accent-soft);
+        border-color: Colors.success.with-alpha(0.32);
+        background: Colors.p.bg-elev;
+        drop-shadow-offset-y: 4px;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: Colors.shadow;
+        opacity: root.success-visible ? 1 : 0;
+        animate opacity { duration: 220ms; }
+        animate y { duration: 200ms; }
         HorizontalLayout {
-            padding-left: 16px;
-            padding-right: 16px;
+            spacing: 10px;
+            padding-left: 14px;
+            padding-right: 18px;
+            // the "done" mark: a filled success disc with a white check
+            Rectangle {
+                width: 22px;
+                height: 22px;
+                border-radius: 11px;
+                background: Colors.success;
+                Icon {
+                    x: (parent.width - 16px) / 2;
+                    y: (parent.height - 16px) / 2;
+                    name: "todo-check";
+                    size: 16px;
+                    color: #ffffff;
+                }
+            }
             Text {
                 horizontal-stretch: 1;
                 vertical-alignment: center;
-                horizontal-alignment: center;
-                text: "已发送 · 已记为笔记";
+                text: "已记录为笔记";
                 font-family: Typography.ui-font;
                 font-size: Typography.size-ui;
                 font-weight: Typography.weight-medium;
                 color: Colors.text-primary;
+                overflow: elide;
             }
         }
     }
