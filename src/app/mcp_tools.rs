@@ -302,6 +302,21 @@ fn arg_opt_bool(args: &Value, key: &str) -> Option<bool> {
     args.get(key).and_then(Value::as_bool)
 }
 
+fn arg_optional_due(args: &Value) -> Result<Option<String>, String> {
+    match args.get("due") {
+        None => Ok(None),
+        Some(Value::String(value)) => {
+            let due = value.trim();
+            if due.is_empty() || crate::core::is_iso_date(due) {
+                Ok(Some(due.to_string()))
+            } else {
+                Err("截止日期必须是有效的 YYYY-MM-DD 日期（或空字符串以清除）。".into())
+            }
+        }
+        Some(_) => Err("缺少或非法参数：due".into()),
+    }
+}
+
 fn priority_slot(name: &str) -> Result<i32, String> {
     match name.trim().to_ascii_lowercase().as_str() {
         "none" => Ok(0),
@@ -471,6 +486,7 @@ fn create_task(state: &Rc<AppState>, args: &Value) -> Result<Value, String> {
     let priority = arg_opt_str(args, "priority")
         .map(priority_slot)
         .transpose()?;
+    let due = arg_optional_due(args)?;
     let id = state
         .org_create_task_tagged(list, Vec::new())
         .ok_or("任务创建失败。")?;
@@ -483,10 +499,10 @@ fn create_task(state: &Rc<AppState>, args: &Value) -> Result<Value, String> {
             state.org_task_notes(id, n.to_string());
         }
     }
-    if let Some(d) = arg_opt_str(args, "due") {
-        if !d.trim().is_empty() {
-            state.org_task_due(id, d.trim().to_string());
-        }
+    if let Some(due) = due {
+        state
+            .org_task_due(id, due)
+            .ok_or("任务截止日期写入失败。")?;
     }
     if let Some(priority) = priority {
         state.org_task_priority(id, priority);
@@ -498,17 +514,25 @@ fn update_task(state: &Rc<AppState>, id: i64, args: &Value) -> Result<Value, Str
     if !state.org_catalog().tasks.iter().any(|t| t.id.0 == id.max(0) as u64) {
         return Err(format!("任务 {id} 不存在。"));
     }
+    // Validate fields that can fail before applying any of the other edits. A bad
+    // due date or priority must not leave a partially updated task behind.
+    let due = arg_optional_due(args)?;
+    let priority = arg_opt_str(args, "priority")
+        .map(priority_slot)
+        .transpose()?;
     if let Some(t) = arg_opt_str(args, "title") {
         state.org_task_title(id, single_line_title(t)?);
     }
     if let Some(n) = arg_opt_str(args, "notes") {
         state.org_task_notes(id, n.to_string());
     }
-    if let Some(d) = arg_opt_str(args, "due") {
-        state.org_task_due(id, d.trim().to_string());
+    if let Some(due) = due {
+        state
+            .org_task_due(id, due)
+            .ok_or("任务截止日期写入失败。")?;
     }
-    if let Some(p) = arg_opt_str(args, "priority") {
-        state.org_task_priority(id, priority_slot(p)?);
+    if let Some(priority) = priority {
+        state.org_task_priority(id, priority);
     }
     if let Some(done) = arg_opt_bool(args, "done") {
         state.org_task_done(id, done);
@@ -609,5 +633,20 @@ mod tests {
     fn agent_prompt_carries_no_credential() {
         let p = agent_prompt(5880);
         assert!(!p.contains("Bearer"), "提示词不该出现鉴权头");
+    }
+
+    #[test]
+    fn due_argument_accepts_iso_date_or_clear_and_rejects_invalid_values() {
+        assert_eq!(arg_optional_due(&json!({})).unwrap(), None);
+        assert_eq!(
+            arg_optional_due(&json!({"due":"  "})).unwrap(),
+            Some(String::new())
+        );
+        assert_eq!(
+            arg_optional_due(&json!({"due":"2026-02-28"})).unwrap(),
+            Some("2026-02-28".into())
+        );
+        assert!(arg_optional_due(&json!({"due":"2026-2-28"})).is_err());
+        assert!(arg_optional_due(&json!({"due":42})).is_err());
     }
 }
