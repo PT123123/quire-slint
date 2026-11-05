@@ -1,6 +1,7 @@
 // Platform adapters — only where Slint/Windows forces us to (M8).
 // Policy (ADR-0002): never implement TSF/IME ourselves.
 
+pub mod autostart;
 pub mod dib;
 pub mod hotkeys;
 pub mod monitors;

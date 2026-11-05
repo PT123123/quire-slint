@@ -750,6 +750,20 @@ fn real_main(start: std::time::Instant) -> Result<(), String> {
     quire::services::logging::init(&location); // the rotating log + panic hook (SPEC §二十五, M8 D9)
     mark("logging_init");
 
+    // Workshop releases are immutable, versioned executables. Each one checks
+    // its own per-user Windows Run entry on an ordinary app launch, so running
+    // a newer archived version moves startup to that version automatically.
+    // Skip diagnostic harness launches to keep measurements and probes pure.
+    if !launch.quick_note
+        && !launch.frame_cadence
+        && !launch.measure_startup
+        && launch.auto_exit_secs <= 0.0
+    {
+        if let Err(e) = quire_platform::autostart::ensure_workshop_autostart() {
+            logging::warn(&format!("开机启动检查失败: {e}"));
+        }
+    }
+
     // Persistence (M3): open (or create) the database. A failure to open
     // aborts startup. An in-memory fallback looks editable but silently loses
     // every change when the session exits.

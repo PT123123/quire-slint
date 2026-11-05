@@ -19,3 +19,6 @@ raw-window-handle = "0.6"
 # PNG encode/decode for clipboard image round-trips (dib.rs). Shared with
 # `quire` through the workspace definition so both agree on the feature set.
 image = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.55"

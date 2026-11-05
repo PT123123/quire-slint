@@ -3947,6 +3947,7 @@ dependencies = [
  "image",
  "raw-window-handle",
  "slint",
+ "winreg",
 ]
 
 [[package]]
