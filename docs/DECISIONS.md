@@ -8660,3 +8660,34 @@ elide，行高与宽度无关，所以 D 臂 21 帧。两种改法都有视觉�
 仍未量的两条写明白：没有堆画像（这台机器没有
 WinDbg/WPT，而每事件那几条只有几十字节，正是 drift 臂看不见、所以要 ratchet 臂的理由）；
 两台真机走 LAN 的臂仍然缺，上面每个数都是单机自拨或永不应答的 host。
+
+## ADR-0170 · Workshop 版自己对齐登录启动项，部署脚本不再碰注册表（0.1.48）
+
+**问题。** Workshop 每次发版都落在一个新目录 `C:\workshop\quire-slint-<版本>\`，exe 名也带版本。
+HKCU `Run\Quire` 若只在某次安装时写一次，就会永远指着那一刻的路径；更早的装机版则根本没有这条值
+——2026-11-05 排查时本机 `Run\Quire` 不存在，0.1.47 登录后不会自己起来，重启只能手动开。
+把重写塞进 `deploy-workshop.ps1` 也能修，但那等于让每次发版都承担一份安装态逻辑，换机/手工归档
+就漏。
+
+**决定。** 版本化 Workshop exe 在**普通冷启动**时对齐自己的 Run 项：
+`quire-platform::autostart::ensure_workshop_autostart()` 读 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Quire`，
+与 `current_exe()`（整体加引号）做大小写不敏感比较，不一致就 `RegSetValue` 写回；不删除、不创建
+第二条值。只有 exe 同时满足「父目录 `C:\workshop\quire-slint-*` + 文件名等于目录名 + `.exe`」才启用，
+所以安装版、便携版、`target\debug` 开发树都不会动用户的启动项。诊断启动（`--quick-note`、
+`--measure-startup`、`--frame-cadence`、`--auto-exit`）跳过，避免测量夹具写注册表。
+启停开关仍归 Windows 的 StartupApproved：值存在但被用户在任务管理器关掉时，本模块只做等值比较，
+不会把开关掰回来。
+
+**一个要记住的边界。** 同版本的第二个进程会在 `quit::claim` 的 `AlreadyRunning` 分支直接退出，
+走不到这一步；对齐发生在没有实例时的冷启动——正是登录时 Run 拉起它的场景。新版本顶掉旧版本时
+新进程本来就是 Primary，所以升级换目录仍然立即生效。
+
+**验证（0.1.48，本机现测）。**
+- 首个冷启动后 `Run\Quire` = `"C:\workshop\quire-slint-0.1.48\quire-slint-0.1.48.exe"`，进程
+  `count=1`、`FileVersion=0.1.48.0`、`WER=0`。
+- 对照：先把 `Run\Quire` 手工改回 `"C:\workshop\quire-slint-0.1.47\quire-slint-0.1.47.exe"`，
+  `quire-slint-0.1.48.exe --quit` 后 `count=0`，再冷启动 → `count=1`（pid 20896）、值被自动改回
+  0.1.48、`WER=0`。证明是程序自己对齐，不是部署脚本或手工写入。
+- `cargo test -p quire-platform --features slint/compat-1-18` 28 passed / 2 ignored（含路径门），
+  `cargo check --bin quire-slint` Finished。单独跑 `-p quire-platform` 会因缺 `compat-1-18`
+  编不过 Slint，这是工作区的 feature 统一口径，不是本模块的问题。
