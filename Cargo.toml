@@ -54,7 +54,13 @@ path = "src/main.rs"
 # still syncs with this one.
 # `1d6a357` bounds sync request bodies, deadlines and concurrent sockets, keeps
 # moved blocks in the full-text index, and batches large document imports.
-quire-core = { git = "https://github.com/PT123123/quire-core.git", rev = "1d6a357c05a0a869695efa35160daed0668e92f7" }
+# `1d50c91` re-arms discovery: every heard beat is answered with a unicast
+# hello (POST /sync/hello — TCP, the channel no Wi-Fi driver filters), the
+# beat itself now travels a multicast group (224.0.0.178, inside the /24 some
+# Android devices insist on) beside the broadcast, and the request reader is
+# bounded line by line. Both shells pin this rev together, so a phone and a
+# desktop hear each other even when one side's broadcasts are filtered.
+quire-core = { git = "https://github.com/PT123123/quire-core.git", rev = "1d50c910e38008ca1b7edaf8e2a88819b6028b9a" }
 image = { workspace = true }
 rfd = "0.17.2"
 rusqlite = { workspace = true }
