@@ -60,7 +60,12 @@ path = "src/main.rs"
 # Android devices insist on) beside the broadcast, and the request reader is
 # bounded line by line. Both shells pin this rev together, so a phone and a
 # desktop hear each other even when one side's broadcasts are filtered.
-quire-core = { git = "https://github.com/PT123123/quire-core.git", rev = "1d50c910e38008ca1b7edaf8e2a88819b6028b9a" }
+# `dcfc2bf` shapes the manual round's list: one row per address, freshest
+# first (`one_address_one_row`), and the info handshake gives up on silence
+# in two seconds — a book of desktop generations on one address used to
+# grind the worker through a timeout per ghost row before the round the
+# user pressed for could finish.
+quire-core = { git = "https://github.com/PT123123/quire-core.git", rev = "dcfc2bffead6c96107b981aea0b2b25d0aa46fb4" }
 image = { workspace = true }
 rfd = "0.17.2"
 rusqlite = { workspace = true }
