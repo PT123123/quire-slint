@@ -65,7 +65,7 @@ path = "src/main.rs"
 # in two seconds — a book of desktop generations on one address used to
 # grind the worker through a timeout per ghost row before the round the
 # user pressed for could finish.
-quire-core = { git = "https://github.com/PT123123/quire-core.git", rev = "dcfc2bffead6c96107b981aea0b2b25d0aa46fb4" }
+quire-core = { git = "https://github.com/PT123123/quire-core.git", rev = "95787634785e88b588cd20ebd5d9725dfa05a692" }
 image = { workspace = true }
 rfd = "0.17.2"
 rusqlite = { workspace = true }
